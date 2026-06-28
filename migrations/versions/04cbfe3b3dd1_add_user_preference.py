@@ -1,7 +1,7 @@
 """add_user_preference
 
 Revision ID: 04cbfe3b3dd1
-Revises: fb99167eb709
+Revises: 0001_init_schema
 Create Date: 2026-06-27 05:53:13.712477
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '04cbfe3b3dd1'
-down_revision: Union[str, None] = 'fb99167eb709'
+down_revision: Union[str, None] = '0001_init_schema'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

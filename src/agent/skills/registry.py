@@ -1,48 +1,18 @@
-from dataclasses import dataclass, field
-from pathlib import Path
-import yaml
+"""
+Skill 注册表 —— 基于 SkillMeta 字典。
+"""
 
-from log import logger
+from __future__ import annotations
 
-SKILLS_DIR = Path(__file__).parent
-
-
-@dataclass
-class SkillMeta:
-    name: str
-    path: Path
-    description: str
-    tools: list[str] = field(default_factory=list)
-    auto_load_references: list[str] = field(default_factory=list)
-    body: str = ""  # 缓存 SKILL.md 正文，避免重复读取
+from .loader import SkillMeta, scan_skill_dirs
 
 
 class SkillRegistry:
-    def __init__(self):
+    def __init__(self) -> None:
         self.skills: dict[str, SkillMeta] = {}
 
-    def scan_skills(self):
-        """扫描所有子目录的 SKILL.md，建立 skills 注册表"""
-        for skill_dir in sorted(SKILLS_DIR.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
-
-            raw = skill_file.read_text(encoding="utf-8")
-            meta, body = self._parse_frontmatter(raw)
-
-            self.skills[meta["name"]] = SkillMeta(
-                name=meta["name"],
-                path=skill_dir,
-                description=meta.get("description", ""),
-                tools=meta.get("tools", []),
-                auto_load_references=meta.get("auto_load_references", []),
-                body=body.strip(),
-            )
-
-        logger.info(f"loaded {len(self.skills)} skills")
+    def scan_skills(self) -> None:
+        self.skills = scan_skill_dirs()
 
     # ---------- L1 ----------
 
@@ -74,19 +44,16 @@ class SkillRegistry:
 
         return ref_path.read_text(encoding="utf-8")
 
-    # ---------- 内部 ----------
+    # ---------- PydanticAI Tool 转换 ----------
 
-    def _parse_frontmatter(self, raw: str) -> tuple[dict, str]:
-        if not raw.startswith("---"):
-            return {}, raw
+    def as_pydantic_ai_tools(self) -> list:
+        """将每个 skill 作为一个 function tool 注入 agent。"""
+        tools: list = []
+        for skill in self.skills.values():
+            def _make_skill_fn(name=skill.name, body=skill.body):
+                def skill_fn():
+                    return body
+                return skill_fn
 
-        parts = raw.split("---", 2)
-        if len(parts) < 3:
-            return {}, raw
-
-        _, fm, body = parts
-        return yaml.safe_load(fm) or {}, body.strip()
-
-
-# 全局单例
-registry = SkillRegistry()
+            tools.append((_make_skill_fn(), skill.name, skill.description))
+        return tools

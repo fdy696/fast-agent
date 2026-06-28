@@ -93,10 +93,10 @@ async def init_data() -> None:
     await init_superuser()
 
     # Agent: 初始化 MCP 连接 + 扫描技能 + 连接缓存
-    from agent.mcp_tool import init_mcp_servers
+    from agent.mcp import init_mcp_servers
     await init_mcp_servers()
 
-    from agent.skills.registry import registry
+    from agent.skills import registry
     registry.scan_skills()
 
     from utils.cache import cache_manager
