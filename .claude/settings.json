@@ -1,12 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/docs/**)",
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/**)",
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/utils/**)",
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/core/**)",
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/core/langgraph/**)",
-      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/services/**)"
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/fastapi-langgraph-backend-production-ready-template/docs/**)",
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/fastapi-langgraph-backend-production-ready-template/**)",
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/fastapi-langgraph-backend-production-ready-template/app/utils/**)",
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/fastapi-langgraph-backend-production-ready-template/app/core/**)",
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/fastapi-langgraph-backend-production-ready-template/app/core/langgraph/**)",
+      "Read(//d/Documents/backend-project—2.0/backend-project/backend-fastapi/services/**)",
+      "Bash(exit 0)"
     ]
   }
 }

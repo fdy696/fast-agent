@@ -5,7 +5,7 @@ This package is the integrated SQLAlchemy 2.0 AI-template version.
 ## Base version
 
 - Uses the clean, tested SQLAlchemy 2.0 async rewrite as the base.
-- Keeps the v6 scope: no Tortoise ORM, no Aerich, no traditional RBAC, no AgentPermission dead code, no CTX_USER_ID, no sensitive-word half module.
+- Keeps the v6 scope: no Tortoise ORM, no Aerich, no traditional RBAC, no ServicePermission dead code, no CTX_USER_ID, no sensitive-word half module.
 
 ## Cross-check improvements absorbed
 

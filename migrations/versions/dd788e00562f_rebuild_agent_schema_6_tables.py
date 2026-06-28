@@ -9,12 +9,16 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "dd788e00562f"
 down_revision: Union[str, None] = "9a7d3f1c5e8b"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+
+JSON_DICT = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
 
 
 def upgrade() -> None:
@@ -28,10 +32,11 @@ def upgrade() -> None:
         sa.Column("summary_until_message_id", sa.Integer(), nullable=True),
         sa.Column("summary_until_created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("status", sa.String(16), nullable=False, server_default="active"),
-        sa.Column("metadata", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("metadata", JSON_DICT, nullable=False, server_default="{}"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint("status IN ('active', 'archived', 'deleted')", name="ck_conversations_status"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_conversations_user_id", ondelete="RESTRICT"),
         sa.UniqueConstraint("user_id", "session_id", name="uq_conversations_user_session"),
     )
@@ -49,9 +54,10 @@ def upgrade() -> None:
         sa.Column("run_id", sa.String(64), nullable=True),
         sa.Column("role", sa.String(16), nullable=False),
         sa.Column("content", sa.Text(), nullable=False, server_default=""),
-        sa.Column("metadata", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("metadata", JSON_DICT, nullable=False, server_default="{}"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint("role IN ('user', 'assistant', 'system', 'tool')", name="ck_cm_role"),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], name="fk_cm_conversation_id", ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_cm_user_id", ondelete="RESTRICT"),
     )
@@ -77,6 +83,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint("status IN ('running', 'succeeded', 'failed', 'cancelled')", name="ck_agent_runs_status"),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], name="fk_ar_conversation_id", ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_ar_user_id", ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["user_message_id"], ["conversation_messages.id"], name="fk_ar_user_msg", ondelete="SET NULL"),
@@ -115,14 +122,20 @@ def upgrade() -> None:
         sa.Column("category", sa.String(32), nullable=False),
         sa.Column("type", sa.String(32), nullable=False),
         sa.Column("name", sa.String(128), nullable=False),
-        sa.Column("input", sa.JSON(), nullable=True),
-        sa.Column("output", sa.JSON(), nullable=True),
+        sa.Column("input", JSON_DICT, nullable=True),
+        sa.Column("output", JSON_DICT, nullable=True),
         sa.Column("status", sa.String(16), nullable=False, server_default="running"),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "category IN ('llm_call', 'tool_call', 'retrieval', 'reasoning', 'routing')",
+            name="ck_agent_steps_category",
+        ),
+        sa.CheckConstraint("type IN ('model', 'tool', 'skill', 'memory')", name="ck_agent_steps_type"),
+        sa.CheckConstraint("status IN ('running', 'succeeded', 'failed', 'cancelled')", name="ck_agent_steps_status"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.run_id"], name="fk_as_run_id", ondelete="CASCADE"),
         sa.UniqueConstraint("run_id", "step_index", name="uq_agent_steps_run_step"),
     )
@@ -144,9 +157,15 @@ def upgrade() -> None:
         sa.Column("cost", sa.Numeric(12, 6), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint("prompt_tokens >= 0", name="ck_tu_prompt_tokens_non_negative"),
+        sa.CheckConstraint("cached_tokens >= 0", name="ck_tu_cached_tokens_non_negative"),
+        sa.CheckConstraint("completion_tokens >= 0", name="ck_tu_completion_tokens_non_negative"),
+        sa.CheckConstraint("total_tokens >= 0", name="ck_tu_total_tokens_non_negative"),
+        sa.CheckConstraint("cost >= 0", name="ck_tu_cost_non_negative"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_tu_user_id", ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], name="fk_tu_conversation_id", ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.run_id"], name="fk_tu_run_id", ondelete="CASCADE"),
+        sa.UniqueConstraint("run_id", name="uq_token_usage_run_id"),
     )
     op.create_index(op.f("ix_token_usage_user_id"), "token_usage", ["user_id"])
     op.create_index(op.f("ix_token_usage_conversation_id"), "token_usage", ["conversation_id"])
@@ -167,13 +186,14 @@ def upgrade() -> None:
         sa.Column("type", sa.String(32), nullable=False),
         sa.Column("title", sa.String(255), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
-        sa.Column("data", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("data", JSON_DICT, nullable=False, server_default="{}"),
         sa.Column("text_content", sa.Text(), nullable=True),
         sa.Column("file_id", sa.String(256), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint("status IN ('pending', 'ready', 'failed', 'deleted')", name="ck_artifacts_status"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_artifacts_user_id", ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], name="fk_artifacts_conv_id", ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.run_id"], name="fk_artifacts_run_id", ondelete="SET NULL"),

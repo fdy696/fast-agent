@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -45,6 +45,7 @@ class AgentRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
+        CheckConstraint("status IN ('running', 'succeeded', 'failed', 'cancelled')", name="ck_agent_runs_status"),
         Index("ix_ar_conv_created", "conversation_id", "created_at"),
         Index("ix_ar_user_created", "user_id", "created_at"),
         Index("ix_ar_status_created", "status", "created_at"),

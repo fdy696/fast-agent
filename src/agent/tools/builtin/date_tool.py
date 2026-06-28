@@ -1,20 +1,12 @@
+"""Built-in date/time tools.
+
+No parameters — pydantic-ai uses the function signature as the JSON Schema.
 """
-内置纯函数工具 —— current_time 等。
-"""
 
-from datetime import UTC, datetime
-
-from agent.tools.registry import ToolRegistry
-from agent.tools.schemas import RegisteredTool
+from datetime import datetime, timezone, timedelta
 
 
-def register_builtin_tools(registry: ToolRegistry) -> list[RegisteredTool]:
-
-    @registry.register(
-        name="current_time",
-        description="Return the current UTC time as an ISO 8601 string.",
-    )
-    def current_time() -> str:
-        return datetime.now(UTC).isoformat()
-
-    return registry.all
+async def current_time() -> str:
+    """Return the current time in Asia/Shanghai (UTC+8) as an ISO 8601 string."""
+    tz = timezone(timedelta(hours=8))
+    return datetime.now(tz).isoformat()

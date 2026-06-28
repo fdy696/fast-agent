@@ -1,4 +1,4 @@
-# fast-agent
+# fastapi-backend-template
 
 轻量 AI 应用后端模板，基于 FastAPI、SQLAlchemy 2.0 Async、Alembic 和 JWT Auth。
 

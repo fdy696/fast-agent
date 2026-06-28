@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -37,6 +37,12 @@ class TokenUsage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("run_id", name="uq_token_usage_run_id"),
+        CheckConstraint("prompt_tokens >= 0", name="ck_tu_prompt_tokens_non_negative"),
+        CheckConstraint("cached_tokens >= 0", name="ck_tu_cached_tokens_non_negative"),
+        CheckConstraint("completion_tokens >= 0", name="ck_tu_completion_tokens_non_negative"),
+        CheckConstraint("total_tokens >= 0", name="ck_tu_total_tokens_non_negative"),
+        CheckConstraint("cost >= 0", name="ck_tu_cost_non_negative"),
         Index("ix_tu_user_created", "user_id", "created_at"),
         Index("ix_tu_conv_created", "conversation_id", "created_at"),
         Index("ix_tu_model_created", "model", "created_at"),

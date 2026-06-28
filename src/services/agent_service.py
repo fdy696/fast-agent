@@ -1,28 +1,30 @@
 """Agent business orchestration.
 
 Owns DB lifecycle, conversation/message/run state, and SSE mapping.
-The runtime loop stays database-free.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
-import asyncio
-from collections.abc import AsyncIterator
 from typing import Any
 
+from ag_ui.core import RunAgentInput
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent import AgentEvent, AgentLoop, AgentLoopRequest
+from agent.model_client import build_agent
 from agent.prompts import default_system_prompt
-from agent.tools import create_default_tool_executor
+from agent.tools import ask_human, current_time
 from core.config import settings
+from log import logger
 from repositories import (
     AgentRunRepository,
-    AgentStepRepository,
     ConversationMessageRepository,
     ConversationRepository,
-    TokenUsageRepository,
 )
 from schemas.agent import ChatRequest
 
@@ -33,185 +35,226 @@ class AgentService:
         self.conv_repo = ConversationRepository(db)
         self.msg_repo = ConversationMessageRepository(db)
         self.run_repo = AgentRunRepository(db)
-        self.step_repo = AgentStepRepository(db)
-        self.usage_repo = TokenUsageRepository(db)
 
-    async def run(self, payload: ChatRequest, user_id: int) -> dict[str, Any]:
-        if payload.session_id is None:
-            payload.session_id = str(uuid.uuid4())
-        chunks: list[str] = []
-        async for event in self.stream(payload, user_id):
-            if event.type == "llm.delta":
-                chunks.append(str(event.data.get("text", "")))
-            elif event.type == "error":
-                chunks.append(str(event.data.get("message", "")))
-                break
-        return {
-            "answer": "".join(chunks),
-            "session_id": payload.session_id,
-            "model": settings.AGENT_MODEL,
-            "tool_calls": [],
-        }
-
-    async def stream(self, payload: ChatRequest, user_id: int) -> AsyncIterator[AgentEvent]:
-        session_id = payload.session_id or str(uuid.uuid4())
-        run_id = self._new_run_id()
-
-        conv, _ = await self.conv_repo.get_or_create(
-            session_id=session_id,
-            user_id=user_id,
-        )
-        user_msg = await self.msg_repo.insert(
-            conversation_id=conv.id,
-            user_id=user_id,
-            role="user",
-            content=payload.message,
-            run_id=run_id,
-            meta=self._message_meta(payload.metadata),
-        )
-        run = await self.run_repo.create(
-            run_id=run_id,
-            conversation_id=conv.id,
-            user_id=user_id,
-            model=settings.AGENT_MODEL,
-            user_message_id=user_msg.id,
-        )
-
-        tool_executor = create_default_tool_executor()
-        loop = AgentLoop(tool_executor=tool_executor)
-        context = await self._build_context(conv.id)
-        request = AgentLoopRequest(
-            prompt=payload.message,
-            system_prompt=self._build_system_prompt(
-                payload.system_prompt or default_system_prompt(),
-                context,
-            ),
-            context=context,
-            tools=tool_executor.definitions(),
-        )
-
-        answer_parts: list[str] = []
-        step_index = 0
-        llm_step = await self.step_repo.insert(
-            run_id=run_id,
-            step_index=step_index,
-            category="llm_call",
-            type="model",
-            name=settings.AGENT_MODEL,
-            input={"prompt_length": len(payload.message)},
-            status="running",
-        )
-        step_index += 1
-
-        try:
-            async for event in loop.stream(request):
-                if event.type == "llm.delta":
-                    text = str(event.data.get("text", ""))
-                    answer_parts.append(text)
-                    yield event
-                elif event.type == "tool.call":
-                    yield event
-                elif event.type == "tool.result":
-                    await self.step_repo.insert(
-                        run_id=run_id,
-                        step_index=step_index,
-                        category="tool_call",
-                        type="tool",
-                        name=str(event.data.get("name", "unknown")),
-                        output=self._compact_event_data(event),
-                        status="succeeded" if event.data.get("ok") else "failed",
-                        error=str(event.data.get("error")) if event.data.get("error") else None,
-                    )
-                    step_index += 1
-                    yield event
-                elif event.type == "done":
-                    await self.step_repo.mark_done(
-                        llm_step,
-                        status="succeeded",
-                        output={"answer_length": len("".join(answer_parts))},
-                    )
-                    yield event
-                elif event.type == "error":
-                    message = str(event.data.get("message", "Agent runtime error"))
-                    await self.step_repo.mark_done(llm_step, status="failed", error=message)
-                    await self.run_repo.mark_failed(run, error=message)
-                    yield event
-                    return
-
-            full_answer = "".join(answer_parts)
-            assistant_msg = await self.msg_repo.insert(
-                conversation_id=conv.id,
-                user_id=user_id,
-                role="assistant",
-                content=full_answer,
-                run_id=run_id,
-                meta=self._message_meta({"content_type": "markdown"}),
-            )
-            await self.run_repo.mark_succeeded(run, assistant_message_id=assistant_msg.id)
-            await self.usage_repo.insert(
-                user_id=user_id,
-                conversation_id=conv.id,
-                run_id=run_id,
-                model=settings.AGENT_MODEL,
-            )
-            await self.conv_repo.touch(conv)
-        except (GeneratorExit, asyncio.CancelledError):
-            await self.run_repo.mark_cancelled(run)
-            raise
-        except Exception as exc:
-            await self.step_repo.mark_done(llm_step, status="failed", error=str(exc))
-            await self.run_repo.mark_failed(run, error=str(exc))
-            raise
-
-    async def _build_context(self, conversation_id: int) -> dict[str, Any]:
-        messages = await self.msg_repo.list_by_conversation(
-            conversation_id=conversation_id,
-            limit=20,
-        )
-        return {
-            "recent_messages": [
-                {"role": msg.role, "content": msg.content}
-                for msg in messages
-            ]
-        }
-
-    @staticmethod
-    def _build_system_prompt(base_prompt: str, context: dict[str, Any]) -> str:
-        recent_messages = context.get("recent_messages") or []
-        if not recent_messages:
-            return base_prompt
-
-        lines = [base_prompt, "", "Recent conversation context:"]
-        for msg in recent_messages[-10:]:
-            role = msg.get("role", "unknown")
-            content = str(msg.get("content", ""))
-            if content:
-                lines.append(f"{role}: {content[:1000]}")
-        return "\n".join(lines)
+    # ── helpers (plain functions — no self needed) ──────────────────────
 
     @staticmethod
     def _message_meta(extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        meta = {
-            "content_type": "text",
-            "visibility": "normal",
-            "tool_name": None,
-            "tool_call_id": None,
-            "skill_name": None,
-            "source": None,
-            "version": 1,
+        meta: dict[str, Any] = {
+            "content_type": "text", "visibility": "normal",
+            "tool_name": None, "tool_call_id": None,
+            "skill_name": None, "source": None, "version": 1,
         }
         meta.update(extra or {})
         return meta
 
     @staticmethod
-    def _compact_event_data(event: AgentEvent) -> dict[str, Any]:
-        data = dict(event.data)
-        value = data.get("data")
-        if isinstance(value, str) and len(value) > 1000:
-            data["data"] = value[:1000]
-            data["truncated"] = True
-        return data
-
-    @staticmethod
     def _new_run_id() -> str:
         return str(uuid.uuid4())
+
+    # ── message history builder ─────────────────────────────────────────
+
+    def _build_message_history(
+        self, messages: list[Any],
+    ) -> list[ModelMessage]:
+        """Convert DB conversation messages into PydanticAI ModelMessage objects.
+
+        Uses the native pydantic-ai types to represent conversation history,
+        so the LLM sees proper role attribution instead of text mashed into
+        the system prompt.
+        """
+        history: list[ModelMessage] = []
+        for m in messages:
+            role = getattr(m, "role", None)
+            content = getattr(m, "content", "")
+            if not content:
+                continue
+            if role == "user":
+                history.append(ModelRequest(parts=[TextPart(content=content)]))
+            elif role == "assistant":
+                history.append(ModelResponse(parts=[TextPart(content=content)]))
+            # tool messages are omitted — pydantic-ai manages tool state internally
+        return history
+
+    # ── non-streaming path ──────────────────────────────────────────────
+
+    async def run(self, payload: ChatRequest, user_id: int) -> dict[str, Any]:
+        """Non-streaming chat using pydantic-aiʼs native agent.run()."""
+        if payload.session_id is None:
+            payload.session_id = str(uuid.uuid4())
+
+        session_id = payload.session_id
+        run_id = self._new_run_id()
+
+        conv, _ = await self.conv_repo.get_or_create(
+            session_id=session_id, user_id=user_id,
+        )
+        run = await self.run_repo.create(
+            run_id=run_id, conversation_id=conv.id,
+            user_id=user_id, model=settings.AGENT_MODEL,
+        )
+        await self.msg_repo.insert(
+            conversation_id=conv.id, user_id=user_id,
+            role="user", content=payload.message, run_id=run_id,
+            meta=self._message_meta(payload.metadata),
+        )
+
+        # Build message history from prior conversation — pydantic-ai
+        # receives proper ModelMessage objects with role attribution.
+        db_messages = await self.msg_repo.list_by_conversation(
+            conversation_id=conv.id, limit=20,
+        )
+        message_history = self._build_message_history(db_messages)
+
+        system_prompt = payload.system_prompt or default_system_prompt()
+
+        agent = build_agent(system_prompt=system_prompt)
+        agent.tool(current_time)
+        agent.tool(ask_human)
+
+        try:
+            result = await agent.run(
+                payload.message,
+                message_history=message_history,
+            )
+        except Exception as exc:
+            await self.run_repo.mark_failed(run, error=str(exc))
+            raise
+
+        answer = str(result.output) if result.output is not None else ""
+
+        # Extract tool calls from parts within new messages
+        tool_calls: list[dict[str, Any]] = []
+        for msg in result.new_messages():
+            for part in getattr(msg, "parts", []):
+                if getattr(part, "part_kind", None) == "tool-call":
+                    tool_calls.append({
+                        "name": part.tool_name,
+                        "args": part.args,
+                    })
+
+        assistant_msg = await self.msg_repo.insert(
+            conversation_id=conv.id, user_id=user_id,
+            role="assistant", content=answer, run_id=run_id,
+            meta=self._message_meta({"content_type": "markdown"}),
+        )
+        await self.run_repo.mark_succeeded(run, assistant_message_id=assistant_msg.id)
+        await self.conv_repo.touch(conv)
+
+        return {
+            "answer": answer,
+            "session_id": session_id,
+            "model": settings.AGENT_MODEL,
+            "tool_calls": tool_calls,
+        }
+
+    # ── streaming (AG-UI) path ──────────────────────────────────────────
+
+    async def stream_ag_ui(self, request: Request, user_id: int):
+        """AG-UI protocol streaming via pydantic-ai.
+
+        Uses from_request() + run_stream() + streaming_response() separately
+        (instead of the convenience dispatch_request()) so that stream-level
+        errors can be caught and the run marked as failed.
+        """
+        body = await request.body()
+        run_input = RunAgentInput.model_validate_json(body)
+        session_id = run_input.thread_id or str(uuid.uuid4())
+        run_id = self._new_run_id()
+
+        # Extract user message content for DB persistence
+        user_content = ""
+        for msg in run_input.messages:
+            if getattr(msg, "role", None) == "user":
+                content_val = getattr(msg, "content", None)
+                if isinstance(content_val, str):
+                    user_content = content_val
+                elif isinstance(content_val, list):
+                    for item in content_val:
+                        text = (
+                            getattr(item, "text", None)
+                            or getattr(item, "content", None)
+                            or ""
+                        )
+                        user_content += text
+
+        # ── pre-stream DB writes ──
+        conv, _ = await self.conv_repo.get_or_create(
+            session_id=session_id, user_id=user_id,
+        )
+        run = await self.run_repo.create(
+            run_id=run_id, conversation_id=conv.id,
+            user_id=user_id, model=settings.AGENT_MODEL,
+        )
+        await self.msg_repo.insert(
+            conversation_id=conv.id, user_id=user_id,
+            role="user", content=user_content, run_id=run_id,
+            meta=self._message_meta(),
+        )
+
+        system_prompt = default_system_prompt()
+
+        # Build agent (model_client may raise)
+        try:
+            agent = build_agent(system_prompt=system_prompt)
+            agent.tool(current_time)
+            agent.tool(ask_human)
+        except Exception as exc:
+            await self.run_repo.mark_failed(run, error=str(exc))
+
+            async def error_stream():
+                yield f"data: {json.dumps({'type': 'RUN_ERROR', 'message': str(exc), 'code': 'model_not_configured'})}\n\n"
+
+            return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+        # DB message history for conversation continuity.
+        # AGUIAdapter merges this with frontend-submitted messages; the
+        # system prompt stays clean — no history text injected into it.
+        db_messages = await self.msg_repo.list_by_conversation(
+            conversation_id=conv.id, limit=20,
+        )
+        message_history = self._build_message_history(db_messages)
+
+        async def on_complete(agent_result):
+            """Write assistant message + mark run succeeded after stream completes."""
+            output = agent_result.output
+            if output is None:
+                output = ""
+
+            assistant_msg = await self.msg_repo.insert(
+                conversation_id=conv.id, user_id=user_id,
+                role="assistant", content=str(output), run_id=run_id,
+                meta=self._message_meta({"content_type": "markdown"}),
+            )
+            await self.run_repo.mark_succeeded(run, assistant_message_id=assistant_msg.id)
+            await self.conv_repo.touch(conv)
+
+        # Build the adapter and run stream manually so we can wrap the
+        # event iterator and catch errors that happen *during* streaming
+        # (dispatch_request returns a Response before the stream starts,
+        # so its try/except cannot catch mid-stream failures).
+        adapter = await AGUIAdapter.from_request(
+            request,
+            agent=agent,
+            manage_system_prompt="client",
+        )
+
+        async def event_stream():
+            """Wrap run_stream to catch stream-level errors and mark run failed."""
+            try:
+                async for event in adapter.run_stream(
+                    message_history=message_history,
+                    conversation_id=session_id,
+                    on_complete=on_complete,
+                ):
+                    yield event
+            except Exception as exc:
+                logger.exception("Agent stream failed for conversation %s", session_id)
+                await self.run_repo.mark_failed(run, error=str(exc))
+                yield adapter.encode_event(
+                    type="RUN_ERROR",
+                    message=str(exc),
+                    code="stream_error",
+                )
+
+        return adapter.streaming_response(event_stream())

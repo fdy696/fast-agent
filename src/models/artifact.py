@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
+from models.types import JsonDict
 
 
 class Artifact(Base):
@@ -45,7 +46,7 @@ class Artifact(Base):
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
-    data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    data: Mapped[dict] = mapped_column(JsonDict, default=dict, nullable=False)
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -58,6 +59,7 @@ class Artifact(Base):
     )
 
     __table_args__ = (
+        CheckConstraint("status IN ('pending', 'ready', 'failed', 'deleted')", name="ck_artifacts_status"),
         Index("ix_artifacts_user_created", "user_id", "created_at"),
         Index("ix_artifacts_conv_created", "conversation_id", "created_at"),
         Index("ix_artifacts_type_status", "type", "status"),

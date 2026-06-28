@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
+from models.types import JsonDict
 
 
 class ConversationMessage(Base):
@@ -34,10 +35,11 @@ class ConversationMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    meta: Mapped[dict] = mapped_column("metadata", JsonDict, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant', 'system', 'tool')", name="ck_cm_role"),
         Index("ix_cm_conv_id", "conversation_id", "id"),
         Index("ix_cm_user_created", "user_id", "created_at"),
     )

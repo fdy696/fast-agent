@@ -59,6 +59,17 @@ class AgentRunRepository:
         await self.db.refresh(run)
         return run
 
+    async def bind_user_message(
+        self,
+        run: AgentRun,
+        *,
+        user_message_id: int,
+    ) -> AgentRun:
+        run.user_message_id = user_message_id
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
+
     async def mark_failed(self, run: AgentRun, *, error: str) -> AgentRun:
         run.status = "failed"
         run.error = error

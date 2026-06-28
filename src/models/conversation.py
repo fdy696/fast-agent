@@ -2,10 +2,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, TimestampMixin
+from models.types import JsonDict
 
 
 class Conversation(Base, TimestampMixin):
@@ -28,10 +29,11 @@ class Conversation(Base, TimestampMixin):
     )
     summary_until_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
-    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    meta: Mapped[dict] = mapped_column("metadata", JsonDict, default=dict, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("user_id", "session_id", name="uq_conversations_user_session"),
+        CheckConstraint("status IN ('active', 'archived', 'deleted')", name="ck_conversations_status"),
         Index("ix_conversations_user_updated", "user_id", "updated_at"),
         Index("ix_conversations_user_status_updated", "user_id", "status", "updated_at"),
     )
