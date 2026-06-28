@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 调试面板 — fast-agent</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root { --bg: #1a1a2e; --panel: #16213e; --border: #0f3460; --text: #eee; --accent: #e94560; --green: #00c853; --dim: #888; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; }
+  .sidebar { width: 280px; background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; flex-shrink: 0; }
+  .sidebar h2 { font-size: 16px; margin-bottom: 12px; color: var(--accent); }
+  .sidebar label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 4px; }
+  .sidebar input, .sidebar button { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+  .sidebar button { cursor: pointer; margin-top: 8px; background: var(--accent); border: none; font-weight: 600; }
+  .sidebar button:hover { opacity: 0.85; }
+  .sidebar .sessions { margin-top: 12px; }
+  .sidebar .sess-item { padding: 8px; cursor: pointer; border-radius: 6px; font-size: 13px; margin-bottom: 4px; border: 1px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar .sess-item:hover { background: var(--border); }
+  .sidebar .sess-item.active { border-color: var(--accent); }
+  .main { flex: 1; display: flex; flex-direction: column; }
+  .toolbar { display: flex; gap: 8px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); align-items: center; }
+  .toolbar span { font-size: 13px; color: var(--dim); }
+  .toolbar .status { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 10px; }
+  .toolbar .status.on { background: #003d00; color: var(--green); }
+  .toolbar .status.off { background: #3d0000; color: var(--accent); }
+  .chat-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 95%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.6; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); }
+  .msg.assistant { margin-right: auto; background: var(--border); }
+  .msg.skills { align-self: center; background: #1b3a1b; border: 1px solid var(--green); font-size: 12px; }
+  .msg.itinerary_plans { align-self: center; background: #1a1a3a; border: 1px solid #6666ff; font-size: 12px; }
+  .msg.error { align-self: center; background: #3a1a1a; border: 1px solid var(--accent); font-size: 12px; }
+  .msg.done { align-self: center; font-size: 12px; color: var(--dim); }
+  .msg pre { background: #0003; padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 6px; }
+  .msg img { max-width: 300px; border-radius: 8px; margin-top: 6px; }
+  .msg table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  .msg th, .msg td { border: 1px solid var(--dim); padding: 6px 10px; text-align: left; font-size: 13px; }
+  .msg th { background: #fff1; }
+  .msg ul, .msg ol { padding-left: 20px; margin: 6px 0; }
+  .msg blockquote { border-left: 3px solid var(--accent); padding-left: 10px; color: var(--dim); margin: 8px 0; }
+  .msg code { background: #fff2; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .msg pre code { background: none; padding: 0; }
+  .input-area { display: flex; gap: 8px; padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--border); }
+  .input-area input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; }
+  .input-area button { padding: 10px 20px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; }
+  .input-area button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .plan-view { display: none; position: fixed; top: 0; right: 0; width: 420px; height: 100vh; background: var(--panel); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; z-index: 10; }
+  .plan-view.open { display: block; }
+  .plan-view h3 { color: var(--accent); margin-bottom: 12px; }
+  .plan-view pre { background: var(--bg); padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; white-space: pre-wrap; }
+  .plan-view button { margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <h2>Agent 调试面板</h2>
+
+  <label>Token <span style="font-size:11px;color:var(--dim);">（自动获取）</span></label>
+  <input id="token" placeholder="点击下方按钮获取..." readonly>
+  <button onclick="getToken()">获取调试 Token</button>
+
+  <label>Session ID</label>
+  <div style="display:flex;gap:6px;">
+    <input id="sessionId" placeholder="会话 ID">
+    <button onclick="createSession()" style="width:60px;flex-shrink:0;">新建</button>
+  </div>
+
+  <button onclick="refreshSessions()">刷新会话列表</button>
+  <div class="sessions" id="sessionList"></div>
+</div>
+
+<div class="main">
+  <div class="toolbar">
+    <span>SSE 流式聊天</span>
+    <span class="status off" id="sseStatus">空闲</span>
+    <button onclick="openPlanView()" style="margin-left:8px;font-size:12px;padding:4px 10px;">查看行程 JSON</button>
+  </div>
+
+  <div class="chat-area" id="chatArea">
+    <div class="msg assistant">发送消息开始调试，例如：<br>"帮我规划三天北京游" 或 "今天北京天气怎么样"</div>
+  </div>
+
+  <div class="input-area">
+    <input id="msgInput" placeholder="输入消息..." onkeydown="if(event.key==='Enter') sendMsg()">
+    <button id="sendBtn" onclick="sendMsg()">发送</button>
+  </div>
+</div>
+
+<div class="plan-view" id="planView">
+  <h3>行程 JSON</h3>
+  <div style="display:flex;gap:6px;margin-bottom:8px;">
+    <input id="planIdInput" placeholder="planId" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+    <input id="planSessionIdInput" placeholder="sessionId" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+    <button onclick="fetchPlan()" style="padding:6px 10px;">查询</button>
+  </div>
+  <pre id="planContent">暂无数据</pre>
+  <button onclick="closePlanView()">关闭</button>
+</div>
+
+<script>
+const BASE = 'http://127.0.0.1:8000';
+let abortController = null;   // 用于取消正在进行的 SSE 请求
+let streamingEl = null;       // 当前正在流式输出的气泡
+
+// ===================== Token =====================
+async function getToken() {
+  const r = await fetch(`${BASE}/debug/token?username=admin`);
+  const d = await r.json();
+  document.getElementById('token').value = d.token;
+  addMsg('assistant', `已获取 Token，username: ${d.username}`);
+}
+
+// ===================== 会话 =====================
+async function createSession() {
+  const token = document.getElementById('token').value;
+  if (!token) return alert('请先获取 Token');
+  const r = await fetch(`${BASE}/api/v1/agent/create_conversation`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const d = await r.json();
+  if (d.code === 200) {
+    document.getElementById('sessionId').value = d.data.session_id;
+    addMsg('assistant', `已创建会话: ${d.data.session_id}`);
+    refreshSessions();
+  } else {
+    addMsg('error', `创建会话失败: ${d.msg || JSON.stringify(d)}`);
+  }
+}
+
+async function refreshSessions() {
+  const token = document.getElementById('token').value;
+  if (!token) return;
+  const r = await fetch(`${BASE}/api/v1/agent/all_conversation_list`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const d = await r.json();
+  const list = document.getElementById('sessionList');
+  list.innerHTML = '';
+  if (d.code === 200 && d.data) {
+    d.data.forEach(s => {
+      const div = document.createElement('div');
+      div.className = 'sess-item';
+      div.textContent = s.title || ('会话 ' + s.session_id?.slice(0, 8));
+      div.title = s.session_id;
+      div.onclick = () => {
+        document.getElementById('sessionId').value = s.session_id;
+        loadConversation(s.session_id);
+        // 高亮当前
+        document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
+        div.classList.add('active');
+      };
+      list.appendChild(div);
+    });
+  }
+}
+
+async function loadConversation(sid) {
+  const token = document.getElementById('token').value;
+  const r = await fetch(`${BASE}/api/v1/agent/get_conversation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ session_id: sid })
+  });
+  const d = await r.json();
+  const area = document.getElementById('chatArea');
+  area.innerHTML = '';
+  if (d.code === 200 && d.data && Array.isArray(d.data)) {
+    d.data.forEach(m => {
+      if (m.role === 'user') addMsg('user', m.content);
+      else if (m.role === 'assistant') addMsg('assistant', m.original || m.content, m.inference_steps);
+    });
+  } else {
+    addMsg('error', `加载失败: ${d.msg || ''}`);
+  }
+}
+
+// ===================== 消息渲染 =====================
+function addMsg(role, content, meta) {
+  const area = document.getElementById('chatArea');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = formatContent(content || '');
+  if (meta && meta.length) {
+    div.innerHTML += `<pre style="font-size:11px;margin-top:6px;">调用技能: ${meta.map(m=>m.skill_explicate||m.skill_name).join(', ')}</pre>`;
+  }
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+  return div;
+}
+
+function appendStream(text) {
+  if (!streamingEl) {
+    streamingEl = addMsg('assistant', '');
+    streamingEl._rawText = '';
+  }
+  streamingEl._rawText += text;
+  streamingEl.innerHTML = formatContent(streamingEl._rawText);
+  document.getElementById('chatArea').scrollTop = document.getElementById('chatArea').scrollHeight;
+}
+
+function endStream() {
+  if (streamingEl) {
+    delete streamingEl._rawText;
+  }
+  streamingEl = null;
+}
+
+function formatContent(text) {
+  if (!text) return '';
+  return marked.parse(text);
+}
+
+// ===================== SSE 流式聊天 =====================
+function updateStreamStatus(status) {
+  const s = document.getElementById('sseStatus');
+  switch (status) {
+    case 'streaming':
+      s.textContent = '流式中';
+      s.className = 'status on';
+      break;
+    case 'done':
+      s.textContent = '空闲';
+      s.className = 'status off';
+      break;
+    case 'error':
+      s.textContent = '错误';
+      s.className = 'status off';
+      break;
+  }
+}
+
+async function sendMsg() {
+  const input = document.getElementById('msgInput');
+  const content = input.value.trim();
+  const token = document.getElementById('token').value;
+  const sessionId = document.getElementById('sessionId').value;
+  if (!content) return;
+  if (!token) return alert('请先获取 Token');
+  if (!sessionId) return alert('请先创建/选择会话');
+
+  // 取消之前的请求
+  if (abortController) abortController.abort();
+
+  addMsg('user', content);
+  input.value = '';
+  document.getElementById('sendBtn').disabled = true;
+  endStream();
+
+  abortController = new AbortController();
+  updateStreamStatus('streaming');
+
+  try {
+    const resp = await fetch(`${BASE}/api/v1/agent/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ sessionId, content }),
+      signal: abortController.signal,
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      addMsg('error', `请求失败 (${resp.status}): ${errText}`);
+      updateStreamStatus('error');
+      document.getElementById('sendBtn').disabled = false;
+      return;
+    }
+
+    // 读取 SSE 流
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';  // 最后一部分可能不完整，保留
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6);
+        try {
+          const d = JSON.parse(jsonStr);
+          switch (d.role) {
+            case 'assistant':
+              appendStream(d.content);
+              break;
+            case 'skills':
+              addMsg('skills', JSON.stringify(d.content, null, 2));
+              break;
+            case 'itinerary_plans':
+              addMsg('itinerary_plans', JSON.stringify(d.content, null, 2));
+              if (d.content.id || d.content.plan_id) {
+                document.getElementById('planIdInput').value = d.content.id || d.content.plan_id;
+                document.getElementById('planSessionIdInput').value = sessionId;
+              }
+              break;
+            case 'error':
+              endStream();
+              addMsg('error', d.content);
+              break;
+            case 'done':
+              endStream();
+              addMsg('done', '--- 本轮结束 ---');
+              break;
+            default:
+              addMsg(d.role, d.content);
+          }
+        } catch (e) {
+          // 忽略解析错误（可能是空行或 chunk 不完整）
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      // 用户主动取消
+    } else {
+      endStream();
+      addMsg('error', `流式错误: ${e.message}`);
+    }
+  } finally {
+    updateStreamStatus('done');
+    document.getElementById('sendBtn').disabled = false;
+  }
+}
+
+// ===================== 行程 JSON =====================
+async function fetchPlan() {
+  const planId = document.getElementById('planIdInput').value;
+  const sessionId = document.getElementById('planSessionIdInput').value;
+  const token = document.getElementById('token').value;
+  if (!planId || !sessionId) return;
+  const r = await fetch(`${BASE}/api/v1/agent/get_travel_plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ plan_id: planId, session_id: sessionId })
+  });
+  const d = await r.json();
+  document.getElementById('planContent').textContent = JSON.stringify(d, null, 2);
+}
+
+function openPlanView() { document.getElementById('planView').classList.add('open'); }
+function closePlanView() { document.getElementById('planView').classList.remove('open'); }
+
+// ===================== 初始化 =====================
+getToken();
+</script>
+</body>
+</html>

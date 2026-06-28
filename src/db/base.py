@@ -1,0 +1,28 @@
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import DateTime, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ToDictMixin:
+    def to_dict(self, exclude: set[str] | None = None) -> dict[str, Any]:
+        exclude = exclude or set()
+        data = {}
+        for column in self.__table__.columns:
+            if column.name in exclude:
+                continue
+            value = getattr(self, column.name)
+            if isinstance(value, (datetime, date)):
+                value = value.isoformat()
+            data[column.name] = value
+        return data

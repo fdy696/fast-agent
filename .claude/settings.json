@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/docs/**)",
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/**)",
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/utils/**)",
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/core/**)",
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/fastapi-langgraph-agent-production-ready-template/app/core/langgraph/**)",
+      "Read(//d/Documents/agent-project—2.0/agent-project/agent-fastapi/services/**)"
+    ]
+  }
+}
