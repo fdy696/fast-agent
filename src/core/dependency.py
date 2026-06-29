@@ -1,7 +1,7 @@
 import secrets
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
 class AuthControl:
     @staticmethod
     async def is_authed(
+        request: Request,
         token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     ) -> User:
         try:
@@ -46,6 +47,8 @@ class AuthControl:
             user = await UserRepository(db).get(user_id)
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="Authentication failed")
+        request.state.user_id = user.id
+        request.state.username = user.username
         return user
 
     @staticmethod

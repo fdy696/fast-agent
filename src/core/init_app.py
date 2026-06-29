@@ -45,6 +45,7 @@ def make_middlewares() -> list[Middleware]:
             exclude_paths=[
                 r"/api/v1/auth/login",
                 r"/api/v1/auth/refresh",
+                r"/api/v1/agent/chat/stream",
                 r"/docs",
                 r"/redoc",
                 r"/openapi.json",
@@ -91,6 +92,9 @@ async def init_superuser() -> None:
 
 async def init_data() -> None:
     await init_superuser()
+
+    from agent.model_client import init_agent
+    init_agent()
 
     # Agent: 初始化 MCP 连接 + 扫描技能 + 连接缓存
     from agent.mcp import init_mcp_servers

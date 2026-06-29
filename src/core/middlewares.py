@@ -7,10 +7,9 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from core.security import verify_token
 from db.session import AsyncSessionLocal
 from log import logger
-from models import AuditLog, User
+from models import AuditLog
 
 SENSITIVE_KEYS = {"password", "token", "authorization", "access_token", "refresh_token"}
 
@@ -21,14 +20,6 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize(item) for item in value]
     return value
-
-
-async def get_user_from_token_for_middleware(token: str, db) -> User | None:
-    try:
-        payload = verify_token(token, token_type="access")
-        return await db.get(User, int(payload["user_id"]))
-    except Exception:
-        return None
 
 
 class HttpAuditLogMiddleware(BaseHTTPMiddleware):
@@ -75,14 +66,8 @@ class HttpAuditLogMiddleware(BaseHTTPMiddleware):
             data["module"] = ",".join(getattr(route, "tags", []) or [])
             data["summary"] = getattr(route, "summary", "") or ""
 
-        authorization = request.headers.get("Authorization", "")
-        if authorization.startswith("Bearer "):
-            token = authorization.removeprefix("Bearer ").strip()
-            async with AsyncSessionLocal() as db:
-                user = await get_user_from_token_for_middleware(token, db)
-                if user:
-                    data["user_id"] = user.id
-                    data["username"] = user.username
+        data["user_id"] = getattr(request.state, "user_id", 0) or 0
+        data["username"] = getattr(request.state, "username", "") or ""
         return data
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
