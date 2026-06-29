@@ -36,6 +36,9 @@ source .venv/bin/activate
 # 配置环境变量
 cp .env.example .env      # 按需修改 DATABASE_URL 等
 
+# 启动数据库和缓存
+docker compose up -d
+
 # 数据库迁移
 alembic upgrade head
 
@@ -77,6 +80,36 @@ Authorization: Bearer <access_token>
 ```bash
 PYTHONPATH=src pytest
 ```
+
+## 基础设施容器（Docker）
+
+项目依赖 **PostgreSQL**（pgvector）和 **Redis**，通过 Docker Compose 管理：
+
+```bash
+# 启动所有服务
+docker compose up -d
+
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 停止所有服务
+docker compose down
+```
+
+> ⚠️ 如果拉取镜像超时，可能是系统代理未配置到 Docker 守护进程，运行以下命令：
+> ```bash
+> sudo mkdir -p /etc/systemd/system/docker.service.d
+> ```
+> 然后创建 `/etc/systemd/system/docker.service.d/proxy.conf`：
+> ```ini
+> [Service]
+> Environment="HTTP_PROXY=http://127.0.0.1:7897"
+> Environment="HTTPS_PROXY=http://127.0.0.1:7897"
+> ```
+> 最后重启 Docker：`sudo systemctl daemon-reload && sudo systemctl restart docker`
 
 ## 数据库
 

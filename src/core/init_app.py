@@ -45,7 +45,7 @@ def make_middlewares() -> list[Middleware]:
             exclude_paths=[
                 r"/api/v1/auth/login",
                 r"/api/v1/auth/refresh",
-                r"/api/v1/agent/chat/stream",
+                # r"/api/v1/agent/chat/stream",
                 r"/docs",
                 r"/redoc",
                 r"/openapi.json",

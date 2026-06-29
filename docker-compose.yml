@@ -1,0 +1,38 @@
+name: fast-agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg16
+    container_name: fast-agent-postgres
+    environment:
+      POSTGRES_DB: fast_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - fast_agent_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: fast-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - fast_agent_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  fast_agent_postgres_data:
+  fast_agent_redis_data:
