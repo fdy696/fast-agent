@@ -327,6 +327,52 @@ function handleSSEEvent(d) {
       addMsg('error', d.message || '运行时错误');
       break;
 
+    // ── Reasoning / Thinking 推理过程 ──
+    case 'REASONING_START':
+    case 'THINKING_START':
+      addMsg('system', '🤔 开始推理...');
+      break;
+
+    case 'REASONING_MESSAGE_START':
+    case 'THINKING_TEXT_MESSAGE_START':
+      streamingEl = addMsg('tool_call', '🧠 推理中');
+      streamingEl._rawText = '';
+      streamingEl._isReasoning = true;
+      break;
+
+    case 'REASONING_MESSAGE_CONTENT':
+    case 'THINKING_TEXT_MESSAGE_CONTENT':
+      if (!streamingEl || !streamingEl._isReasoning) {
+        streamingEl = addMsg('tool_call', '🧠 推理中');
+        streamingEl._rawText = '';
+        streamingEl._isReasoning = true;
+      }
+      streamingEl._rawText += d.delta || '';
+      streamingEl.innerHTML = `<b>🧠 推理中</b>\n<pre>${escapeHtml(streamingEl._rawText)}</pre>`;
+      document.getElementById('chatArea').scrollTop = document.getElementById('chatArea').scrollHeight;
+      break;
+
+    case 'REASONING_MESSAGE_END':
+    case 'THINKING_TEXT_MESSAGE_END':
+      if (streamingEl && streamingEl._isReasoning) {
+        streamingEl.innerHTML = `<b>🧠 推理完成</b>\n<pre>${escapeHtml(streamingEl._rawText || '')}</pre>`;
+        delete streamingEl._rawText;
+        delete streamingEl._isReasoning;
+        streamingEl = null;
+      }
+      break;
+
+    case 'REASONING_END':
+    case 'THINKING_END':
+      if (streamingEl && streamingEl._isReasoning) {
+        streamingEl.innerHTML = `<b>🧠 推理完成</b>\n<pre>${escapeHtml(streamingEl._rawText || '')}</pre>`;
+        delete streamingEl._rawText;
+        delete streamingEl._isReasoning;
+        streamingEl = null;
+      }
+      addMsg('system', '✅ 推理结束');
+      break;
+
     default:
       // 未知事件类型，忽略
   }
