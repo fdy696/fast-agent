@@ -730,6 +730,7 @@ class SkillMeta:
 # ═══════════════════════════════════════════════════════
 
 _RESOURCE_EXTENSIONS = {'.md', '.json', '.yaml', '.yml', '.csv', '.xml', '.txt'}
+_SCRIPT_EXTENSIONS  = {'.py', '.sh', '.js', '.ts'}   # 可执行脚本扩展名
 
 
 def scan_skill_dirs(base_dir: Path) -> dict[str, SkillMeta]:
@@ -790,25 +791,45 @@ def _discover_resources(skill_dir: Path) -> list[SkillResource]:
 
 
 def _discover_scripts(skill_dir: Path) -> list[SkillScript]:
-    """扫描根目录 + scripts/ 子目录下的可执行文件"""
+    """扫描根目录 + scripts/ 子目录下的可执行脚本
+
+    规则：
+    1. 扩展名在 _SCRIPT_EXTENSIONS 中
+    2. 无扩展名但具有执行权限的文件也纳入
+    3. 排除 __init__.py 和 SKILL.md
+    """
     scripts: list[SkillScript] = []
     skill_dir_resolved = skill_dir.resolve()
-    dirs = [skill_dir]
-    scripts_dir = skill_dir / 'scripts'
-    if scripts_dir.is_dir():
-        dirs.append(scripts_dir)
 
-    for d in dirs:
+    # 先检查 scripts/ 子目录
+    scripts_dir = skill_dir / 'scripts'
+    scan_dirs = [skill_dir]
+    if scripts_dir.is_dir():
+        scan_dirs.append(scripts_dir)
+
+    for d in scan_dirs:
         for f in d.iterdir():
-            if not f.is_file() or f.name in {'__init__.py', 'SKILL.md'}:
+            if not f.is_file():
                 continue
-            if f.suffix.lower() not in _RESOURCE_EXTENSIONS:
+            name = f.name
+            if name in {'__init__.py', 'SKILL.md'}:
                 continue
+
+            # 可执行：扩展名在 _SCRIPT_EXTENSIONS 中，或无扩展名但可执行
+            is_executable = (
+                f.suffix.lower() in _SCRIPT_EXTENSIONS
+                or ('.' not in name and f.stat().st_mode & 0o111)
+            )
+            if not is_executable:
+                continue
+
             resolved = f.resolve()
             try:
                 resolved.relative_to(skill_dir_resolved)
             except ValueError:
+                warnings.warn(f"脚本 {f} 路径穿越，已跳过")
                 continue
+
             scripts.append(SkillScript(
                 name=f.relative_to(skill_dir).as_posix(),
                 path=resolved,
