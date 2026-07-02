@@ -828,7 +828,6 @@ class AppCapability(AbstractCapability):
     daily_budget: float = 50.0  # 每日成本预算（美元）
 
     _mcp_toolsets: list = field(default_factory=list, init=False)
-    _skill_capability: SkillsCapability | None = field(default=None, init=False)
     _total_cost: float = field(default=0.0, init=False)
 
     async def before_run(self, ctx, run_context):
@@ -876,8 +875,7 @@ class AppCapability(AbstractCapability):
                 await self._alert("大 Token 消耗", f"单次调用 {tokens} tokens")
 
     def get_toolset(self):
-        if self._skill_capability:
-            return self._skill_capability.get_toolset()
+        # Skills 通过独立的 SkillsCapability 注册，避免重复
         return None
 
     async def _alert(self, title: str, content: str):
@@ -959,21 +957,21 @@ def create_production_agent(
             cache_tools=True,
         ))
 
-    # 2. 创建 AppCapability（横切关注点）
+    # 2. 创建 AppCapability（横切关注点），不再聚合 SkillsCapability
     app_capability = AppCapability(
         feishu_webhook=feishu_webhook,
         daily_budget=50.0,
     )
     app_capability._mcp_toolsets = mcp_toolsets
+    # 不再设置 app_capability._skill_capability，通过独立的 SkillsCapability 注册
 
     # 3. 创建 SkillsCapability（Agent Skills）
     skills_capability = SkillsCapability(
         directories=skill_dirs,
         auto_reload=True,
     )
-    app_capability._skill_capability = skills_capability
 
-    # 4. 创建 Agent
+    # 4. 创建 Agent — 各自独立注册，不会重复
     agent = Agent(
         model=model,
         capabilities=[app_capability, skills_capability],
@@ -1046,19 +1044,19 @@ def get_agent() -> Agent:
                     │  Agent  │
                     └────┬────┘
                          │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-   capabilities[]    toolsets[]     tools[]
-          │              │              │
-   ┌──────▼──────┐ ┌────▼─────┐ ┌─────▼─────┐
-   │AppCapability│ │MCPToolset│ │@agent.tool│
-   │ (横切关注点) │ │(远程工具) │ │(静态工具)  │
-   │             │ └──────────┘ └───────────┘
-   │ ┌─────────┐ │
-   │ │Skills   │ │
-   │ │Capability│ │
-   │ └────┬────┘ │
-   └──────┼──────┘
+          ┌──────────────┼──────────────────┐
+          ▼              ▼                  ▼
+   capabilities[]    toolsets[]           tools[]
+          │              │                  │
+   ┌──────▼──────┐ ┌────▼─────┐    ┌───────▼───────┐
+   │AppCapability│ │MCPToolset│    │  @agent.tool  │
+   │ (横切关注点) │ │(远程工具) │    │  (静态工具)   │
+   └──────┬──────┘ └──────────┘    └───────────────┘
+          │
+   ┌──────▼──────┐
+   │Skills       │
+   │Capability   │
+   └──────┬──────┘
           │
    ┌──────▼──────┐
    │SkillsToolset│
