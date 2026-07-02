@@ -130,15 +130,36 @@ async def get_weather(ctx: RunContext, city: str) -> str:
     weather_data = {"北京": "晴 25°C", "上海": "多云 28°C"}
     return weather_data.get(city, f"未找到 {city} 的天气数据")
 
+import ast
+import operator as op
+
+# 安全的数学计算器 — 白名单方式解析表达式
+_SAFE_OPS = {
+    ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul,
+    ast.Div: op.truediv, ast.Pow: op.pow, ast.USub: op.neg,
+}
+
+def _safe_eval(expr: str) -> float:
+    """安全地计算四则运算表达式。仅支持数字、+、-、*、/、**、()、空格。"""
+    def _eval_node(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+            return _SAFE_OPS[type(node.op)](_eval_node(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+            return _SAFE_OPS[type(node.op)](_eval_node(node.left), _eval_node(node.right))
+        raise ValueError(f"不支持的运算: {ast.dump(node)}")
+    return _eval_node(ast.parse(expr.strip(), mode='eval').body)
+
 @agent.tool
 async def calculate(ctx: RunContext, expression: str) -> str:
-    """计算数学表达式。
+    """计算数学表达式。仅支持四则运算和括号。
 
     Args:
-        expression: 数学表达式，例如 "2 + 3 * 4"。
+        expression: 数学表达式，例如 "2 + 3 * 4" 或 "(1 + 2) * 3"。
     """
     try:
-        return str(eval(expression))
+        return str(_safe_eval(expression))
     except Exception as e:
         return f"计算错误: {e}"
 ```
