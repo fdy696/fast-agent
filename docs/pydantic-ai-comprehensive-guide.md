@@ -842,22 +842,23 @@ def _discover_scripts(skill_dir: Path) -> list[SkillScript]:
 # ═══════════════════════════════════════════════════════
 
 class SkillRegistry:
-    """内存注册表 — 原子替换 + lazy load"""
+    """内存注册表 — 多目录合并 + 原子替换 + lazy load"""
 
-    def __init__(self, base_dir: Path | None = None):
-        self._base_dir = base_dir
+    def __init__(self, base_dirs: list[Path] | None = None):
+        self._base_dirs: list[Path] = base_dirs or []
         self._skills: dict[str, SkillMeta] = {}
 
     def scan(self) -> None:
-        if self._base_dir is None:
-            return
-        self._skills = scan_skill_dirs(self._base_dir)
+        """扫描所有 base_dir，合并结果。同名技能后扫描的覆盖先扫描的。"""
+        new_skills: dict[str, SkillMeta] = {}
+        for base_dir in self._base_dirs:
+            discovered = scan_skill_dirs(base_dir)
+            new_skills.update(discovered)  # 后扫描覆盖先扫描
+        self._skills = new_skills
 
     def reload(self) -> None:
         """原子替换：先构建新 dict 再赋值，避免并发读到半空状态"""
-        if self._base_dir is None:
-            return
-        self._skills = scan_skill_dirs(self._base_dir)
+        self.scan()
 
     def list_skills(self) -> dict[str, str]:
         return {name: s.description for name, s in self._skills.items()}
@@ -1045,10 +1046,10 @@ class SkillsCapability(AbstractCapability):
     _registry: SkillRegistry = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._registry = SkillRegistry()
-        for d in self.directories:
-            self._registry._base_dir = Path(d)
-            self._registry.scan()
+        self._registry = SkillRegistry(
+            base_dirs=[Path(d) for d in self.directories]
+        )
+        self._registry.scan()  # 一次性扫描全部目录并合并
         self._toolset = SkillsToolset(self._registry, auto_reload=self.auto_reload)
 
     def get_toolset(self) -> SkillsToolset:
