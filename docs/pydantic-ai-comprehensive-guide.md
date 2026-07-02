@@ -908,7 +908,11 @@ def _json_to_dict(v: Any) -> Any:
 
 
 class SkillsToolset(FunctionToolset):
-    """4 个标准工具：list_skills / load_skill / read_skill_resource / run_skill_script"""
+    """4 个标准工具：list_skills / load_skill / read_skill_resource / run_skill_script
+
+    ⚠️ 原理演示 — 展示 Agent Skills 渐进式加载的核心思想。
+    实际项目建议直接使用 pydantic-ai-skills。
+    """
 
     def __init__(self, registry: SkillRegistry, *, auto_reload: bool = False):
         super().__init__()
@@ -922,79 +926,83 @@ class SkillsToolset(FunctionToolset):
         skills_xml = self._registry.build_instruction_xml()
         return INSTRUCTIONS_HEADER.format(skills_xml=skills_xml) if skills_xml else None
 
-    # ── L1: 技能目录 ──
-    @self.tool
-    async def list_skills(_ctx: RunContext) -> dict[str, str]:
-        """获取所有可用技能的名称和描述。切换话题时先用此工具查看是否有对口的技能。"""
-        return self._registry.list_skills()
+    def _register_tools(self) -> None:
+        """在 __init__ 中调用，self 可用，安全地注册 4 个工具"""
 
-    # ── L2: 加载技能 ──
-    @self.tool
-    async def load_skill(ctx: RunContext, skill_name: str) -> str:
-        """加载指定技能的完整指令和资源清单。skill_name 必须与 list_skills 输出完全一致。"""
-        try:
-            skill = self._registry.get_skill(skill_name)
-        except KeyError:
-            available = ', '.join(self._registry.list_skills().keys()) or '无'
-            raise ModelRetry(
-                f"技能 '{skill_name}' 不存在。可用: {available}。"
-                f"请调用 list_skills 确认后重试。"
+        # ── L1: 技能目录 ──
+        @self.tool
+        async def list_skills(ctx: RunContext) -> dict[str, str]:
+            """获取所有可用技能的名称和描述。切换话题时先用此工具查看是否有对口的技能。"""
+            return self._registry.list_skills()
+
+        # ── L2: 加载技能 ──
+        @self.tool
+        async def load_skill(ctx: RunContext, skill_name: str) -> str:
+            """加载指定技能的完整指令和资源清单。skill_name 必须与 list_skills 输出完全一致。"""
+            try:
+                skill = self._registry.get_skill(skill_name)
+            except KeyError:
+                available = ', '.join(self._registry.list_skills().keys()) or '无'
+                raise ModelRetry(
+                    f"技能 '{skill_name}' 不存在。可用: {available}。"
+                    f"请调用 list_skills 确认后重试。"
+                )
+
+            resources_xml = '\n'.join(
+                f'<resource name="{r.name}"/>' for r in skill.resources
+            ) if skill.resources else '<!-- 无资源 -->'
+
+            refs = ''
+            if skill.auto_load_references:
+                ref_parts = []
+                for ref_name in skill.auto_load_references:
+                    try:
+                        ref_parts.append(self._registry.get_resource(skill_name, ref_name))
+                    except Exception:
+                        ref_parts.append(f'<!-- 自动加载失败: {ref_name} -->')
+                refs = '\n<auto_loaded_references>\n' + '\n\n'.join(ref_parts) + '\n</auto_loaded_references>'
+
+            return LOAD_SKILL_TEMPLATE.format(
+                name=skill.name, description=skill.description,
+                resources_xml=resources_xml, body=skill.body,
+                refs_section=refs,
             )
 
-        resources_xml = '\n'.join(
-            f'<resource name="{r.name}"/>' for r in skill.resources
-        ) if skill.resources else '<!-- 无资源 -->'
+        # ── L3: 按需读资源 ──
+        @self.tool
+        async def read_skill_resource(ctx: RunContext, skill_name: str, resource_name: str) -> str:
+            """读取技能的补充资源文件（模板、Schema、参考文档等）。仅在 load_skill 后使用。"""
+            try:
+                return self._registry.get_resource(skill_name, resource_name)
+            except KeyError:
+                skill = self._registry.get_skill(skill_name)
+                available = [r.name for r in skill.resources]
+                raise ModelRetry(f"资源 '{resource_name}' 不存在。可用: {available}")
 
-        refs = ''
-        if skill.auto_load_references:
-            ref_parts = []
-            for ref_name in skill.auto_load_references:
-                try:
-                    ref_parts.append(self._registry.get_resource(skill_name, ref_name))
-                except Exception:
-                    ref_parts.append(f'<!-- 自动加载失败: {ref_name} -->')
-            refs = '\n<auto_loaded_references>\n' + '\n\n'.join(ref_parts) + '\n</auto_loaded_references>'
+        # ── L3: 执行脚本 ──
+        @self.tool
+        async def run_skill_script(
+            ctx: RunContext, skill_name: str, script_name: str,
+            args: Annotated[dict[str, Any] | None, BeforeValidator(_json_to_dict)] = None,
+        ) -> str:
+            """执行技能提供的脚本。脚本名从 load_skill 输出中获取，不要猜测。
 
-        return LOAD_SKILL_TEMPLATE.format(
-            name=skill.name, description=skill.description,
-            resources_xml=resources_xml, body=skill.body,
-            refs_section=refs,
-        )
+            🧠 本节为原理演示，run_skill_script 只读取脚本源码，并未真正执行。
+            生产环境中需要实现子进程执行、超时控制、路径安全校验。
+            """
+            try:
+                skill = self._registry.get_skill(skill_name)
+            except KeyError:
+                available = ', '.join(self._registry.list_skills().keys()) or '无'
+                raise ModelRetry(f"技能 '{skill_name}' 不存在。可用: {available}")
 
-    # ── L3: 按需读资源 ──
-    @self.tool
-    async def read_skill_resource(ctx: RunContext, skill_name: str, resource_name: str) -> str:
-        """读取技能的补充资源文件（模板、Schema、参考文档等）。仅在 load_skill 后使用。"""
-        try:
-            return self._registry.get_resource(skill_name, resource_name)
-        except KeyError:
-            skill = self._registry.get_skill(skill_name)
-            available = [r.name for r in skill.resources]
-            raise ModelRetry(f"资源 '{resource_name}' 不存在。可用: {available}")
+            script = next((s for s in skill.scripts if s.name == script_name), None)
+            if script is None:
+                available = [s.name for s in skill.scripts]
+                raise ModelRetry(f"脚本 '{script_name}' 不存在。可用: {available}")
 
-    # ── L3: 执行脚本 ──
-    @self.tool
-    async def run_skill_script(
-        ctx: RunContext, skill_name: str, script_name: str,
-        args: Annotated[dict[str, Any] | None, BeforeValidator(_json_to_dict)] = None,
-    ) -> str:
-        """执行技能提供的脚本。脚本名从 load_skill 输出中获取，不要猜测。"""
-        try:
-            skill = self._registry.get_skill(skill_name)
-        except KeyError:
-            available = ', '.join(self._registry.list_skills().keys()) or '无'
-            raise ModelRetry(f"技能 '{skill_name}' 不存在。可用: {available}")
-
-        script = next((s for s in skill.scripts if s.name == script_name), None)
-        if script is None:
-            available = [s.name for s in skill.scripts]
-            raise ModelRetry(f"脚本 '{script_name}' 不存在。可用: {available}")
-
-        # 简化版脚本执行：读文件内容
-        return script.path.read_text(encoding='utf-8')
-
-    def _register_tools(self) -> None:
-        pass  # @self.tool 装饰器在类定义时已自动注册
+            # 🧠 原理演示：只读源码，不执行
+            return script.path.read_text(encoding='utf-8')
 
 
 # ═══════════════════════════════════════════════════════
