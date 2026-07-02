@@ -17,6 +17,9 @@
 
 ## 1. 为什么需要 Toolset
 
+> **本章目标**：理解 `@agent.tool` 的局限性以及 Toolset 体系的价值
+> **预计时间**：5 分钟
+
 普通的 `@agent.tool` 只能注册编译时已知的工具。当工具列表来自外部系统（文件、数据库、远程服务）时，需要用 Toolset。
 
 | 特性 | @agent.tool | FunctionToolset | MCPToolset |
@@ -37,7 +40,24 @@
        └── 工具来自网络上的 MCP 服务器？ → MCPToolset
 ```
 
+## 本章练习
+
+1. 回想你的项目：哪些工具是编译时就确定的？哪些是运行时才能知道的？
+2. 画一张决策树图：根据工具来源（编译时/DB/远程）选择注册方式
+
+## 验收标准
+
+- [ ] 你能说出 `@agent.tool` / `FunctionToolset` / `MCPToolset` 三者的区别和适用场景
+- [ ] 你能根据实际需求选择正确的工具注册方式
+
+## 延伸阅读
+- pydantic-ai 官方文档：Toolset 体系介绍
+- FunctionToolset API 参考
+
 ## 2. FunctionToolset 实战
+
+> **本章目标**：掌握用 FunctionToolset 动态注册运行时工具
+> **预计时间**：10 分钟
 
 `FunctionToolset` 子类可以在运行时动态注册工具。示例：从数据库加载 API 端点。
 
@@ -113,7 +133,32 @@ async def my_tool(ctx: RunContext, param: str) -> str:
     ...
 ```
 
+## 本章练习
+
+1. 修改 DatabaseToolset，让它从 JSON 文件而不是硬编码列表读取 API 端点
+2. 在 DatabaseToolset 中添加一个能接受不同参数数量的通用工具函数
+3. 验证 `@self.tool` 装饰器的 schema 自动生成效果——检查 LLM 调用时传了哪些参数
+
+## 验收标准
+
+- [ ] 你能创建一个 FunctionToolset 子类并在运行时注册工具
+- [ ] 你能解释 `@self.tool` 和 `@agent.tool` 的区别
+- [ ] 你知道 FunctionToolset 中必须包含 `ctx` 参数
+
+## 常见错误
+
+1. **FunctionToolset 中忘记 `ctx` 参数**：和 `@agent.tool` 一样，必须有 `RunContext`
+2. **不理解 `@self.tool` 的自动 schema 生成**：函数签名决定了 LLM 看到的参数，不需要手写 ToolDefinition
+3. **在 `__init__` 之外注册工具**：所有工具应在构造函数中完成注册
+
+## 延伸阅读
+- pydantic-ai FunctionToolset API 文档
+- pydantic-ai ToolDefinition 和 schema 生成机制
+
 ## 3. MCPToolset：远程工具集成
+
+> **本章目标**：学会用 MCPToolset 接入远程 MCP 工具服务
+> **预计时间**：15 分钟
 
 MCP（Model Context Protocol）允许 Agent 调用远程服务器上的工具，就像调用本地工具一样。
 
@@ -256,7 +301,33 @@ agent = Agent(model=model, toolsets=[mcp])
 
 `cache_tools=True`（默认值）使工具列表在首次获取后缓存。如果你在运行时动态增删 MCP 服务器工具，需要设置为 `cache_tools=False`，否则 Agent 看不到变化。
 
+## 本章练习
+
+1. 用 MCPToolset 接入 GitHub MCP 服务器或自己搭建的测试 MCP 服务器
+2. 设置 `tool_error_behavior='raise'`，模拟 MCP 工具调用失败，观察框架行为
+3. 分别用 `cache_tools=True` 和 `cache_tools=False` 运行，测量启动速度差异
+
+## 验收标准
+
+- [ ] 你能用 MCPToolset 接入远程工具
+- [ ] 你能管理 MCPToolset 的生命周期（`__aenter__` / `__aexit__`）
+- [ ] 你理解 `process_tool_call` 回调的作用
+
+## 常见错误
+
+1. **忘记 `await mcp.__aenter__()`**：MCP 连接不会自动建立，不调用 `__aenter__` 工具列表为空
+2. **覆盖 `call_tool` 而不是用 `process_tool_call`**：覆盖 `call_tool` 会绕过框架的 `tool_error_behavior` 重试机制
+3. **生产环境不设 `cache_tools=True`**：每次 run 都重新获取工具列表会增加延迟
+
+## 延伸阅读
+- MCP 协议规范：https://spec.modelcontextprotocol.io
+- pydantic-ai MCPToolset API 参考
+- MCP 服务器列表与最佳实践
+
 ## 4. Agent Skills：渐进式能力加载
+
+> **本章目标**：理解 Agent Skills 渐进式加载的设计思想和 `SkillsToolset` 的 4 个标准工具
+> **预计时间**：20 分钟
 
 > 🧠 本节包含原理演示代码。`SkillsToolset` 为原理演示，展示渐进式加载的核心思想。
 > 实际项目建议直接使用 `pydantic-ai-skills` 包。
@@ -737,7 +808,33 @@ class SkillsCapability(AbstractCapability):
         return None  # toolset.get_instructions() 按需提供
 ```
 
+## 本章练习
+
+1. 创建一个包含 SKILL.md 的自定义技能（包含 YAML 前页 + 指令 + 模板资源）
+2. 用 SkillsToolset 加载该技能，用 load_skill 工具获取完整指令
+3. 验证渐进式加载：先调用 list_skills（只看描述），再调用 load_skill（看完整指令）
+
+## 验收标准
+
+- [ ] 你能创建符合 Agent Skills 规范的技能目录结构
+- [ ] 你理解 L0-L3 四层渐进式加载的设计思路
+- [ ] 你能说出 SkillsToolset 的 4 个标准工具及其作用
+
+## 常见错误
+
+1. **SKILL.md 中 YAML 前页格式错误**：用逐行扫描解析而不是 split("---")，但 YAML 本身必须合法
+2. **技能名不符合规范**：应为小写字母、数字、连字符，长度不超过 64 字符
+3. **把所有指令放进 description**：description 只是一句话概括，完整指令应放在 body
+
+## 延伸阅读
+- Agent Skills 规范：https://github.com/pydantic/pydantic-ai-skills
+- pydantic-ai-skills pypi 包
+- pydantic-ai AbstractCapability 文档
+
 ## 5. Capability 与 Hooks：统一横切
+
+> **本章目标**：用 AbstractCapability 统一管理告警、日志、成本等横切关注点
+> **预计时间**：15 分钟
 
 > 本节只讲最常用的 6 个钩子。`AbstractCapability` 提供 30 个生命周期钩子，但多数场景只需其中几个。
 
@@ -921,7 +1018,33 @@ agent = Agent(
 
 钩子按 `capabilities` 列表顺序执行。告警/监控相关的 capability 应该放在第一位（最先执行 `before_run`，最后执行 `after_run`）。
 
+## 本章练习
+
+1. 基于 AppCapability 示例，实现一个发送飞书/钉钉告警的真实 capability
+2. 在 `on_tool_execute_error` 中实现自定义重试策略（如网络错误重试 3 次、业务错误直接上报）
+3. 用两个 capability 测试执行顺序：打印日志确认 before_run 和 after_run 的调用顺序
+
+## 验收标准
+
+- [ ] 你能基于 AbstractCapability 创建自定义 capability
+- [ ] 你能说出最常用的 6 个钩子及其触发时机
+- [ ] 你理解 capability 的执行顺序规则
+
+## 常见错误
+
+1. **`get_instructions` 返回重复指令**：toolset 已提供 instructions 时，capability 应返回 `None`
+2. **capability 执行顺序不当**：监控类 capability 应放在列表第一位
+3. **试图用 capability 管理 toolset**：capability 负责横切关注点，toolset 负责工具注册，两者正交
+
+## 延伸阅读
+- pydantic-ai AbstractCapability 完整钩子列表
+- 飞书/钉钉 Webhook 告警接入指南
+- OpenTelemetry + Agent 可观测性最佳实践
+
 ## 6. 生产环境项目结构
+
+> **本章目标**：搭建可维护、可扩展的生产级 Agent 项目结构
+> **预计时间**：15 分钟
 
 ### 6.1 完整的生产级 Agent 创建
 
@@ -1074,7 +1197,33 @@ def get_agent() -> Agent:
    └─────────────┘
 ```
 
+## 本章练习
+
+1. 基于 `create_production_agent` 函数，为自己的项目搭建 Agent 启动代码
+2. 在 `startup` 函数中添加健康检查逻辑：确认所有 MCP 连接和技能目录都存在
+3. 实现 `get_agent()` 的懒加载版本：第一次调用时才初始化
+
+## 验收标准
+
+- [ ] 你能搭建完整的启动/关闭生命周期
+- [ ] 你理解 MCP 连接、Skills 目录扫描、Agent 创建的启动顺序
+- [ ] 你能解释 `capabilities[]`、`toolsets[]`、`tools[]` 三者的架构关系
+
+## 常见错误
+
+1. **启动时 MCPToolset 未调用 `__aenter__`**：在 `startup` 中必须显式初始化
+2. **关闭时忘记 `return_exceptions=True`**：多个 MCP 连接关闭时，一个失败不应阻断其他关闭
+3. **`get_agent()` 直接在模块级调用**：应该在应用启动后才获取 Agent 实例
+
+## 延伸阅读
+- FastAPI + Agent 项目模板
+- pydantic-ai 生产部署最佳实践
+- 容器化 Agent 应用的 Dockerfile 示例
+
 ## 7. 速查表与对比
+
+> **本章目标**：全面回顾并对比 pydantic-ai 2.0 的所有核心概念
+> **预计时间**：5 分钟
 
 ### 7.1 pydantic-ai 2.0 速查表
 
@@ -1105,7 +1254,24 @@ def get_agent() -> Agent:
 | 生命周期钩子 | 无 | 无 | 无 | process_tool_call | 无 | 30 个钩子 |
 | 适用阶段 | 入门 | 入门 | 工程篇 | 工程篇 | 工程篇 | 工程篇 |
 
+## 本章练习
+
+1. 不看文档，默写速查表中每种注册方式的 API 和适用场景
+2. 选 3 个你项目中用到的特性，检查是否用对了对应的 API
+3. 用自己的话概括每种工具的"一句话记忆法"
+
+## 验收标准
+
+- [ ] 你能在不看文档的情况下说出 6 种工具注册方式各自的适用场景
+- [ ] 你能根据业务需求快速判断该用哪种方式
+
+## 延伸阅读
+- pydantic-ai 完整 API 参考
+
 ## 8. 安全与测试清单
+
+> **本章目标**：掌握生产级 Agent 的安全检查项和测试策略
+> **预计时间**：8 分钟
 
 ### 安全检查项
 
@@ -1131,10 +1297,22 @@ def get_agent() -> Agent:
 
 ## 本章练习
 
-1. 用 MCPToolset 接入一个真实 MCP 服务器（如 GitHub MCP、文件系统 MCP）
-2. 创建一个包含 SKILL.md 的自定义技能（包含 YAML 前页 + 指令 + 模板资源）
-3. 为 Agent 添加日志和告警 capability（继承 AbstractCapability 实现）
+1. 对照安全检查清单，逐一检查你自己的 Agent 项目，记录每个检查项的落实情况
+2. 为你的工具函数编写单元测试（mock LLM 调用，只测 tool 逻辑）
+3. 模拟路径穿越攻击（传 `../../etc/passwd` 作为参数），确认防御生效
 
 ## 验收标准
 
-你能设计并实现一个集成 MCP + Skills + 日志告警的生产级 Agent。
+- [ ] 你能对照安全检查清单排查 Agent 项目的安全风险
+- [ ] 你能为 Agent 项目设计并实施测试策略（单元测试、集成测试、安全测试）
+
+## 常见错误
+
+1. **只测 happy path**：不测重试、超限、参数错误等异常路径
+2. **安全检查遗漏**：path traversal、prompt injection、token 无上限是生产环境最常见的 3 个安全问题
+3. **测试中调用真实 LLM**：单元测试应 mock LLM，集成测试才考虑真实调用
+
+## 延伸阅读
+- OWASP Top 10 for LLM Applications
+- pydantic-ai 安全最佳实践
+- pytest-asyncio 单元测试编写指南

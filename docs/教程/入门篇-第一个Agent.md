@@ -13,6 +13,9 @@
 
 ## 1. Pydantic AI 是什么
 
+> **本章目标**：理解 Pydantic AI 是什么、为什么用它
+> **预计时间**：3 分钟
+
 Pydantic AI 是一个基于 Pydantic 的 LLM Agent 框架。它的核心理念是：**用 Python 类型系统驱动 LLM 交互**。
 
 - 你定义函数签名和类型注解，Pydantic AI 自动生成 LLM 能理解的 schema
@@ -21,7 +24,20 @@ Pydantic AI 是一个基于 Pydantic 的 LLM Agent 框架。它的核心理念�
 
 简单说：Pydantic AI = 类型安全的 LLM Agent 框架。
 
+## 本章练习
+
+1. 用自己的话向同事解释 Pydantic AI 和直接调 OpenAI API 的区别
+2. 列出 Pydantic AI 的三个核心优势
+
+## 验收标准
+
+- [ ] 你能说出 Pydantic AI 的核心定位（类型安全、框架内置工具/流式/重试）
+- [ ] 你能区分 Agent、model、instructions 这三者的角色
+
 ## 2. 第一个非流式 Agent
+
+> **本章目标**：写出并运行第一个非流式 Agent 调用
+> **预计时间**：10 分钟
 
 先从最简单的非流式调用开始。`agent.run()` 等待完整回复后一次性返回。
 
@@ -74,7 +90,27 @@ Agent.run()
 
 **关键点**：`result.data` 包含 LLM 的完整回复。非流式调用适合不需要实时显示的批处理场景（如数据处理、自动化任务）。
 
+## 本章练习
+
+1. 把示例中的模型从 deepseek-chat 换成 gpt-4o-mini（只需改动模型名和 api_key）
+2. 让 Agent 用英文回复（修改 instructions）
+3. 运行一次，观察 `result.data` 的格式
+
+## 验收标准
+
+- [ ] 你能自己写出一个 `agent.run()` 的最小调用
+- [ ] 你能解释 `result.data` 里是什么
+
+## 常见错误
+
+1. **API key 写错**：检查 key 是否有效、base_url 是否准确
+2. **模型名写错**：`OpenAIChatModel("deepseek-chat", ...)` 中的模型名是 provider 侧的，不是你的代号
+3. **忘写 `asyncio.run(main())`**：异步函数必须通过 `asyncio.run` 或 `await` 执行
+
 ## 3. 流式输出 run_stream
+
+> **本章目标**：用 `run_stream()` 实现逐字输出效果
+> **预计时间**：8 分钟
 
 流式输出可以逐字显示 LLM 的回复——就像 ChatGPT 的打字效果。适合聊天类应用。
 
@@ -136,7 +172,27 @@ Agent.run_stream()
 
 **关键点**：`run_stream()` 返回的 `result` 既是异步迭代器（`result.stream()`），也持有最终结果（`result.data`）。流式过程中不要访问 `result.data`——它只在流结束后才有值。
 
+## 本章练习
+
+1. 把第 2 节的非流式代码改成流式版本（只改 3 行代码）
+2. 去掉 `flush=True` 运行，观察终端行为差异
+3. 在流结束前打印 `result.data`，确认它是 `None`
+
+## 验收标准
+
+- [ ] 你能写出 `async with agent.run_stream() as result: async for event in result.stream()` 的完整结构
+- [ ] 你知道流式过程中和结束后分别如何访问内容
+
+## 常见错误
+
+1. **在流结束前访问 `result.data`**：返回 `None`，不是 bug 而是设计
+2. **忘记 `flush=True`**：终端可能缓冲，看不到实时打字效果
+3. **误以为 `run_stream` 返回完整字符串**：它是迭代器，需要 `async for` 逐块读取
+
 ## 4. instructions、user prompt、model 的关系
+
+> **本章目标**：清晰理解三大组件各自的作用
+> **预计时间**：5 分钟
 
 这三者是 Agent 的三大基础组件：
 
@@ -209,7 +265,26 @@ result2 = await agent.run("推荐上海景点")  # 同个 Agent，不同问题
 
 instructions 只需设置一次，user prompt 每次调用都不同。
 
+## 本章练习
+
+1. 写一个 Agent：instructions 设"你是旅游助手，回答不超过 3 句话"，然后分别问"推荐北京景点"和"推荐上海景点"
+2. 交换 instructions 和 user prompt 的角色：如果把景点信息写在 instructions 里，把问题作为 user prompt，会发生什么？
+
+## 验收标准
+
+- [ ] 你能准确说出 model / instructions / user prompt 各自的作用
+- [ ] 你能解释为什么 instructions 只需设置一次而 user prompt 每次不同
+
+## 常见错误
+
+1. **把 instructions 当 user prompt 用**：instructions 是系统级设定，user prompt 是每次对话的输入
+2. **instructions 写得模糊**：LLM 按你的描述行事，"帮用户" 不如 "你是一个中文旅游助手，每次回答不超过 3 句话"
+3. **误以为 model 参数只是模型名**：它同时决定了 provider（谁提供服务）和具体的模型版本
+
 ## 5. 常见坑与调试
+
+> **本章目标**：掌握最常见错误的识别和调试方法
+> **预计时间**：5 分钟
 
 ### 坑 1：在流结束前访问 `result.data`
 
@@ -250,10 +325,11 @@ print(event.delta, end='', flush=True)
 
 ## 本章练习
 
-1. 把 instructions 中的回复语言改成英文
-2. 把模型换成 `gpt-4o-mini`（需要 OpenAI API key）
-3. 让 Agent 每次回答不超过 50 字（修改 instructions 即可）
+1. 故意写错一个 API key，运行程序观察报错信息
+2. 在流式代码中，在 `async for` 之前打印 `result.data`，确认是 `None`
+3. 尝试把 instructions 从中文改成英文，观察 Agent 回复语言变化
 
 ## 验收标准
 
-你能不看文档写出一个可流式输出的最小 Agent。
+- [ ] 你能独立排查常见的 Agent 运行错误（API key / 模型名 / 异步调用）
+- [ ] 你能快速定位并修复流式输出中的问题
