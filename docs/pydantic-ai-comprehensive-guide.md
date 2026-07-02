@@ -447,7 +447,7 @@ User: "导出 PDF"
 
 ```python
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
@@ -654,7 +654,7 @@ auto_load_references:
 
 import re
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import Any, Annotated
 
