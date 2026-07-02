@@ -579,6 +579,15 @@ messages.extend(result.new_messages())  # 框架保证格式正确
 
 ## 5. Agent Skills：渐进式能力加载
 
+> 🧠 **本章代码类型说明**
+>
+> 本章所有代码分为两类：
+> - **Layer 1-4**（解析、类型、发现、注册表）：✅ 可直接运行
+> - **Layer 5-6**（SkillsToolset、SkillsCapability）：🧠 原理演示，展示渐进式加载的核心思路
+>
+> 实际项目建议直接使用 `pydantic-ai-skills` 包，无需手写这些实现。
+> 如果你在阅读时想运行代码，请只运行 Layer 1-4 并单独测试。
+
 ### 5.1 为什么需要 Agent Skills
 
 普通的 tool 注册方式有一个问题：你全部注册，LLM 全部看到。当领域指令很长（几百行的攻略模板、多步骤工作流），每一次对话都会被塞进 system prompt，烧 token 且可能干扰 LLM。
@@ -949,6 +958,10 @@ def _json_to_dict(v: Any) -> Any:
         return parsed
     return v
 
+
+> 🧠 **本节为原理演示，不是完整可运行实现。**
+> 它展示的是 `pydantic-ai-skills` 内部如何用 FunctionToolset + 4 个标准工具
+> 实现渐进式加载。实际项目直接 `pip install pydantic-ai-skills` 即可。
 
 class SkillsToolset(FunctionToolset):
     """4 个标准工具：list_skills / load_skill / read_skill_resource / run_skill_script
