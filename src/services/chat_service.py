@@ -193,8 +193,8 @@ class ChatService:
             agent = get_agent()
             system_prompt = default_system_prompt()
             run_input = RunAgentInput(
-                thread_id=msg.session_id, run_id=msg.turn_id,
-                messages=[{"role": "user", "content": msg.content or ""}],
+                threadId=msg.session_id, runId=msg.turn_id,
+                messages=[{"id": f"user-{msg.turn_id}", "role": "user", "content": msg.content or ""}],
                 tools=[], context=[], forwardedProps={}, state={},
             )
             adapter = AGUIAdapter(
