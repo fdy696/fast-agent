@@ -7,8 +7,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from core.config import settings
 from agent.tools import ask_human, current_time
+from core.config import settings
 
 
 class ModelClientError(RuntimeError):
@@ -16,6 +16,7 @@ class ModelClientError(RuntimeError):
 
 
 _agent: Agent | None = None
+_compress_agent: Agent | None = None
 
 
 def init_agent() -> Agent:
@@ -48,6 +49,25 @@ def init_agent() -> Agent:
 def get_agent() -> Agent:
     """Return the initialized process-wide agent."""
     return init_agent()
+
+
+def get_compress_agent() -> Agent:
+    """Return a cheaper agent dedicated to incremental history summaries."""
+    global _compress_agent
+    if _compress_agent is not None:
+        return _compress_agent
+    if not settings.DEEP_SEEK_API_KEY and not settings.API_KEY:
+        raise ModelClientError("Compression model is not configured.")
+    client = AsyncOpenAI(
+        api_key=settings.DEEP_SEEK_API_KEY or settings.API_KEY,
+        base_url=settings.AGENT_BASE_URL,
+    )
+    model = OpenAIChatModel(
+        settings.COMPRESS_MODEL,
+        provider=OpenAIProvider(openai_client=client),
+    )
+    _compress_agent = Agent(model)
+    return _compress_agent
 
 
 def build_agent(*, system_prompt: str | None = None) -> Agent:

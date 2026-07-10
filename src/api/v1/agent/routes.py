@@ -31,6 +31,17 @@ async def chat_stream(
     return await service.stream_ag_ui(request, current_user.id)
 
 
+@router.post(
+    "/chat/messages/{message_id}/retry", summary="Retry a failed message as SSE"
+)
+async def retry_chat_message(
+    message_id: int,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
+):
+    return await AgentService(db).retry_stream(message_id, current_user.id)
+
+
 @router.post("/create_conversation", summary="Create conversation")
 async def create_conversation(
     current_user: CurrentUser,

@@ -13,6 +13,8 @@
 - 文件上传与文件映射
 - 审计日志写入与查询
 - 基础 smoke tests
+- PydanticAI 原生消息持久化、SSE 流式输出与失败重试
+- 累计摘要 + 最近完整 Turn 的 Token 受控历史
 
 ## 快速开始
 
@@ -68,6 +70,19 @@ POST /api/v1/users/
 PUT  /api/v1/users/{user_id}
 DELETE /api/v1/users/{user_id}
 ```
+
+Agent 接口：
+
+```text
+POST /api/v1/agent/chat/completions
+POST /api/v1/agent/chat/stream
+POST /api/v1/agent/chat/messages/{message_id}/retry
+GET  /api/v1/agent/get_conversation?session_id=...
+```
+
+历史消息完整保存在数据库中；只有 `completed` 且包含原生
+PydanticAI `message_data` 的消息会进入模型上下文。长会话自动使用
+“累计摘要 + 最近完整 Turn”，不会拆开工具调用与工具返回。
 
 认证方式：
 

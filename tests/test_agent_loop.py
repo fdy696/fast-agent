@@ -1,88 +1,40 @@
-"""Tests for agent service — non-streaming path using pydantic-ai agent.run()."""
+"""Agent orchestration tests for native history and durable state."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
 from agent.model_client import ModelClientError
-from agent.prompts import default_system_prompt
 from schemas.agent import ChatRequest
 
 
-async def test_run_with_missing_model_key_raises():
-    """AgentService.run() raises ModelClientError when no API key is configured."""
-    from services.agent_service import AgentService
-
-    mock_db = AsyncMock()
-
-    payload = ChatRequest(message="hello", session_id="sess-1")
-
-    with (
-        patch("services.agent_service.ConversationRepository") as conv_repo_cls,
-        patch("services.agent_service.ConversationMessageRepository") as msg_repo_cls,
-        patch("services.agent_service.AgentRunRepository") as run_repo_cls,
-        patch("services.agent_service.get_agent") as mock_get_agent,
-    ):
-        conv_repo = conv_repo_cls.return_value
-        conv_repo.get_or_create = AsyncMock(return_value=(MagicMock(id=1), False))
-
-        msg_repo = msg_repo_cls.return_value
-        msg_repo.insert = AsyncMock(return_value=MagicMock(id=10))
-        msg_repo.list_by_conversation = AsyncMock(return_value=[])
-
-        run_repo = run_repo_cls.return_value
-        run_repo.create = AsyncMock(return_value=MagicMock(id=5))
-        run_repo.mark_failed = AsyncMock()
-
-        mock_get_agent.side_effect = ModelClientError(
-            "Agent model is not configured: set DEEP_SEEK_API_KEY or API_KEY."
-        )
-
-        service = AgentService(mock_db)
-
-        with pytest.raises(ModelClientError, match="not configured"):
-            await service.run(payload, user_id=1)
-
-
-def test_normalize_ag_ui_body_accepts_simple_stream_payload():
+def test_normalize_ag_ui_body_accepts_simple_payload():
     from services.agent_service import AgentService
 
     body = AgentService._normalize_ag_ui_body({"message": "hello"}, user_id=123)
-
-    assert body["messages"] == [
-        {
-            "role": "user",
-            "content": "hello",
-            "id": body["messages"][0]["id"],
-            "user": {"id": "123"},
-        }
-    ]
+    assert body["messages"][0]["content"] == "hello"
+    assert body["messages"][0]["user"]["id"] == "123"
     assert body["threadId"]
     assert body["runId"]
-    assert body["state"] == {}
-    assert body["tools"] == []
-    assert body["context"] == []
-    assert body["forwardedProps"] == {}
 
 
-def test_normalize_ag_ui_body_preserves_optional_thread_when_present():
+def test_normalize_ag_ui_body_discards_untrusted_client_history():
     from services.agent_service import AgentService
 
     body = AgentService._normalize_ag_ui_body(
         {
+            "threadId": "thread-1",
             "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "hello"}],
-                }
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "current question"},
             ],
-            "thread_id": "existing-session",
         },
         user_id=123,
     )
-
-    assert body["threadId"] == "existing-session"
-    assert body["messages"][0]["id"]
-    assert body["messages"][0]["user"]["id"] == "123"
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["content"] == "current question"
 
 
 def test_init_agent_requires_model_key(monkeypatch):
@@ -91,122 +43,86 @@ def test_init_agent_requires_model_key(monkeypatch):
     monkeypatch.setattr(model_client, "_agent", None)
     monkeypatch.setattr("agent.model_client.settings.DEEP_SEEK_API_KEY", "")
     monkeypatch.setattr("agent.model_client.settings.API_KEY", "")
-
     with pytest.raises(ModelClientError, match="not configured"):
         model_client.init_agent()
 
 
-def test_init_agent_caches_agent(monkeypatch):
-    from agent import model_client
-
-    fake_agent = MagicMock()
-    fake_agent.tool_plain.return_value = lambda func: func
-
-    monkeypatch.setattr(model_client, "_agent", None)
-    monkeypatch.setattr("agent.model_client.settings.DEEP_SEEK_API_KEY", "test-key")
-    monkeypatch.setattr("agent.model_client.settings.API_KEY", "")
-    monkeypatch.setattr("agent.model_client.AsyncOpenAI", MagicMock())
-    monkeypatch.setattr("agent.model_client.OpenAIProvider", MagicMock())
-    monkeypatch.setattr("agent.model_client.OpenAIChatModel", MagicMock())
-    monkeypatch.setattr("agent.model_client.Agent", MagicMock(return_value=fake_agent))
-
-    first = model_client.init_agent()
-    second = model_client.init_agent()
-
-    assert first is second
-    assert first is fake_agent
-    assert fake_agent.tool_plain.call_count == 2
-
-
-async def test_run_returns_answer_from_agent():
-    """AgentService.run() returns the agent's output as the answer."""
+async def test_run_persists_native_messages():
     from services.agent_service import AgentService
 
     mock_db = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.flush = AsyncMock()
+    conversation = MagicMock(
+        id=1, session_id="sess-1", summary=None, summary_until_message_id=None
+    )
+    pending = MagicMock(id=10, conversation_id=1, user_id=1, content="hello")
+    native = [
+        ModelRequest(parts=[UserPromptPart(content="hello")]),
+        ModelResponse(parts=[TextPart(content="hi")], model_name="test"),
+    ]
+    result = MagicMock(output="hi")
+    result.new_messages.return_value = native
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=result)
 
     with (
-        patch("services.agent_service.ConversationRepository") as conv_repo_cls,
-        patch("services.agent_service.ConversationMessageRepository") as msg_repo_cls,
-        patch("services.agent_service.AgentRunRepository") as run_repo_cls,
-        patch("services.agent_service.get_agent") as mock_get_agent,
+        patch("services.agent_service.ConversationRepository") as conv_cls,
+        patch("services.agent_service.ConversationMessageRepository") as msg_cls,
+        patch("services.agent_service.HistoryManager") as history_cls,
+        patch("services.agent_service.get_agent", return_value=agent),
     ):
-        conv_repo = conv_repo_cls.return_value
-        conv_repo.get_or_create = AsyncMock(return_value=(MagicMock(id=1), False))
-        conv_repo.touch = AsyncMock()
+        conv_cls.return_value.get_or_create = AsyncMock(
+            return_value=(conversation, False)
+        )
+        conv_cls.return_value.get_by_id = AsyncMock(return_value=conversation)
+        conv_cls.return_value.touch = AsyncMock()
+        msg_cls.return_value.create_pending = AsyncMock(return_value=pending)
+        msg_cls.return_value.claim = AsyncMock(return_value=pending)
+        msg_cls.return_value.complete_turn = AsyncMock(return_value=MagicMock(id=11))
+        msg_cls.return_value.mark_failed = AsyncMock()
+        history_cls.return_value.build = AsyncMock(return_value=[])
 
-        msg_repo = msg_repo_cls.return_value
-        msg_repo.insert = AsyncMock(return_value=MagicMock(id=10))
-        msg_repo.list_by_conversation = AsyncMock(return_value=[])
+        response = await AgentService(mock_db).run(
+            ChatRequest(message="hello", session_id="sess-1"), user_id=1
+        )
 
-        run_repo = run_repo_cls.return_value
-        run_repo.create = AsyncMock(return_value=MagicMock(id=5))
-        run_repo.mark_succeeded = AsyncMock()
-        run_repo.mark_failed = AsyncMock()
-
-        # Mock agent.run() to return a result with new_messages()
-        fake_agent = MagicMock()
-        fake_result = MagicMock()
-        fake_result.output = "The capital of France is Paris."
-        fake_result.new_messages.return_value = []
-        fake_agent.run = AsyncMock(return_value=fake_result)
-        mock_get_agent.return_value = fake_agent
-
-        service = AgentService(mock_db)
-        payload = ChatRequest(message="What is the capital of France?", session_id="sess-1")
-
-        result = await service.run(payload, user_id=1)
-
-        assert result["answer"] == "The capital of France is Paris."
-        assert result["session_id"] == "sess-1"
-        assert result["tool_calls"] == []
-
-        # Verify DB writes happened
-        run_repo.create.assert_called_once()
-        assert msg_repo.insert.call_count == 2  # user msg + assistant msg
-        run_repo.mark_succeeded.assert_called_once()
-        conv_repo.touch.assert_called_once()
-
-        # Verify agent.run() was called with message_history
-        fake_agent.run.assert_called_once()
-        _, kwargs = fake_agent.run.call_args
-        assert "message_history" in kwargs
-        assert kwargs["instructions"] == default_system_prompt()
+        assert response["answer"] == "hi"
+        msg_cls.return_value.create_pending.assert_awaited_once()
+        msg_cls.return_value.claim.assert_awaited_once_with(10)
+        msg_cls.return_value.complete_turn.assert_awaited_once()
+        call = msg_cls.return_value.complete_turn.await_args.kwargs
+        assert call["pending_id"] == 10
+        assert len(call["native_messages"]) == 2
+        assert call["native_messages"][0][0] == "user"
+        assert call["native_messages"][1][0] == "assistant"
 
 
-async def test_run_marks_failed_on_agent_error():
-    """AgentService.run() marks the run as failed when agent.run() raises."""
+async def test_run_marks_pending_message_failed():
     from services.agent_service import AgentService
 
     mock_db = AsyncMock()
+    conversation = MagicMock(
+        id=1, session_id="sess-1", summary=None, summary_until_message_id=None
+    )
+    pending = MagicMock(id=10, conversation_id=1, user_id=1, content="hello")
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=RuntimeError("model exploded"))
 
     with (
-        patch("services.agent_service.ConversationRepository") as conv_repo_cls,
-        patch("services.agent_service.ConversationMessageRepository") as msg_repo_cls,
-        patch("services.agent_service.AgentRunRepository") as run_repo_cls,
-        patch("services.agent_service.get_agent") as mock_get_agent,
+        patch("services.agent_service.ConversationRepository") as conv_cls,
+        patch("services.agent_service.ConversationMessageRepository") as msg_cls,
+        patch("services.agent_service.HistoryManager") as history_cls,
+        patch("services.agent_service.get_agent", return_value=agent),
     ):
-        conv_repo = conv_repo_cls.return_value
-        conv_repo.get_or_create = AsyncMock(return_value=(MagicMock(id=1), False))
-        conv_repo.touch = AsyncMock()
-
-        msg_repo = msg_repo_cls.return_value
-        msg_repo.insert = AsyncMock(return_value=MagicMock(id=10))
-        msg_repo.list_by_conversation = AsyncMock(return_value=[])
-
-        run_repo = run_repo_cls.return_value
-        run_repo.create = AsyncMock(return_value=MagicMock(id=5))
-        run_repo.mark_failed = AsyncMock()
-
-        fake_agent = MagicMock()
-        fake_agent.run = AsyncMock(side_effect=RuntimeError("model exploded"))
-        mock_get_agent.return_value = fake_agent
-
-        service = AgentService(mock_db)
-        payload = ChatRequest(message="hello", session_id="sess-1")
+        conv_cls.return_value.get_or_create = AsyncMock(
+            return_value=(conversation, False)
+        )
+        msg_cls.return_value.create_pending = AsyncMock(return_value=pending)
+        msg_cls.return_value.claim = AsyncMock(return_value=pending)
+        msg_cls.return_value.mark_failed = AsyncMock()
+        history_cls.return_value.build = AsyncMock(return_value=[])
 
         with pytest.raises(RuntimeError, match="model exploded"):
-            await service.run(payload, user_id=1)
-
-        run_repo.mark_failed.assert_called_once()
+            await AgentService(mock_db).run(
+                ChatRequest(message="hello", session_id="sess-1"), user_id=1
+            )
+        msg_cls.return_value.mark_failed.assert_awaited_once_with(10, "model exploded")

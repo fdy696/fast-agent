@@ -53,7 +53,10 @@ class ConversationService:
                 "id": m.id,
                 "role": m.role,
                 "content": m.content,
-                "run_id": m.run_id,
+                "turn_id": m.turn_id,
+                "status": m.status,
+                "error": m.error,
+                "retry_count": m.retry_count,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in msgs

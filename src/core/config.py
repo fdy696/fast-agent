@@ -29,11 +29,19 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: list[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    CORS_ALLOW_HEADERS: list[str] = ["Content-Type", "Authorization", "X-Requested-With"]
+    CORS_ALLOW_HEADERS: list[str] = [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+    ]
 
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/fast_agent"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/fast_agent"
+    )
 
-    JWT_SECRET_KEY: str = Field(default_factory=lambda: os.getenv("SECRET_KEY") or secrets.token_urlsafe(32))
+    JWT_SECRET_KEY: str = Field(
+        default_factory=lambda: os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
+    )
     SECRET_KEY: str | None = None
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 4
@@ -54,13 +62,17 @@ class Settings(BaseSettings):
     RATE_LIMIT_STORAGE_URL: str = "redis://localhost:6379/0"
 
     # Agent / LLM
-    API_KEY: str = ""           # DashScope/百炼 — MCP WebSearch、高德地图用
-    DEEP_SEEK_API_KEY: str = "" # DeepSeek 聊天/压缩客户端独立 key
+    API_KEY: str = ""  # DashScope/百炼 — MCP WebSearch、高德地图用
+    DEEP_SEEK_API_KEY: str = ""  # DeepSeek 聊天/压缩客户端独立 key
     APPCODE: str = ""
     AGENT_MODEL: str = "deepseek-v4-pro"
     AGENT_BASE_URL: str = "https://api.deepseek.com/v1"
     AGENT_MAX_STEPS: int = 12
     COMPRESS_MODEL: str = "deepseek-v4-flash"
+    HISTORY_SUMMARY_TRIGGER_TURNS: int = 12
+    HISTORY_SUMMARY_TRIGGER_TOKENS: int = 10000
+    HISTORY_KEEP_RECENT_TURNS: int = 6
+    HISTORY_MAX_SUMMARY_CHARS: int = 1500
     AGENT_CACHE_TTL: int = 7200
     MCP_TOOL_TIMEOUT: int = 15
     FEISHU_WEBHOOK_URL: str = ""
@@ -76,7 +88,9 @@ class Settings(BaseSettings):
 
     @property
     def CORS_ORIGINS_LIST(self) -> list[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return [
+            origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()
+        ]
 
     @field_validator("JWT_SECRET_KEY")
     @classmethod

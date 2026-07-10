@@ -119,6 +119,8 @@ __pypackages__/
 *.log
 logs/
 log/
+!src/log/
+!src/log/__init__.py
 
 # Temporary files
 temp/

@@ -1,8 +1,8 @@
 """Conversation repository."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.conversation import Conversation
@@ -15,7 +15,9 @@ class ConversationRepository:
     async def get_by_id(self, id: int) -> Conversation | None:
         return await self.db.get(Conversation, id)
 
-    async def get_by_session_id(self, *, session_id: str, user_id: int) -> Conversation | None:
+    async def get_by_session_id(
+        self, *, session_id: str, user_id: int
+    ) -> Conversation | None:
         result = await self.db.execute(
             select(Conversation).where(
                 Conversation.session_id == session_id,
@@ -86,26 +88,52 @@ class ConversationRepository:
             conv.summary_until_message_id = until_message_id
         if until_created_at is not None:
             conv.summary_until_created_at = until_created_at
-        conv.updated_at = datetime.now(timezone.utc)
+        conv.updated_at = datetime.now(UTC)
         await self.db.commit()
         await self.db.refresh(conv)
         return conv
 
+    async def compare_and_set_summary(
+        self,
+        conv: Conversation,
+        *,
+        expected_message_id: int | None,
+        summary: str,
+        until_message_id: int,
+        until_created_at: datetime,
+    ) -> bool:
+        """Update a summary only if another request has not advanced it."""
+        condition = Conversation.summary_until_message_id.is_(None)
+        if expected_message_id is not None:
+            condition = Conversation.summary_until_message_id == expected_message_id
+        result = await self.db.execute(
+            update(Conversation)
+            .where(Conversation.id == conv.id, condition)
+            .values(
+                summary=summary,
+                summary_until_message_id=until_message_id,
+                summary_until_created_at=until_created_at,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.commit()
+        return bool(result.rowcount)
+
     async def archive(self, conv: Conversation) -> Conversation:
         conv.status = "archived"
-        conv.updated_at = datetime.now(timezone.utc)
+        conv.updated_at = datetime.now(UTC)
         await self.db.commit()
         await self.db.refresh(conv)
         return conv
 
     async def soft_delete(self, conv: Conversation) -> Conversation:
         conv.status = "deleted"
-        conv.updated_at = datetime.now(timezone.utc)
+        conv.updated_at = datetime.now(UTC)
         await self.db.commit()
         await self.db.refresh(conv)
         return conv
 
     async def touch(self, conv: Conversation) -> Conversation:
-        conv.updated_at = datetime.now(timezone.utc)
+        conv.updated_at = datetime.now(UTC)
         await self.db.commit()
         return conv
