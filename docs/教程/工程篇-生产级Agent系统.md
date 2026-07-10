@@ -1110,7 +1110,7 @@ def create_production_agent(
         """获取当前服务器时间"""
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    return agent
+    return agent, app_capability
 ```
 
 ### 6.2 启动和关闭
@@ -1119,13 +1119,14 @@ def create_production_agent(
 import asyncio
 
 _agent: Agent | None = None
+_app_capability: AppCapability | None = None
 
 
 async def startup():
     """应用启动：初始化 MCP 连接、扫描技能、创建 Agent"""
-    global _agent
+    global _agent, _app_capability
 
-    _agent = create_production_agent(
+    _agent, _app_capability = create_production_agent(
         model=model,
         mcp_servers=[
             {"name": "web-search", "url": "...", "api_key": "..."},
@@ -1135,18 +1136,16 @@ async def startup():
         feishu_webhook="https://open.feishu.cn/...",
     )
 
-    app_capability = _agent.capabilities[0]
     await asyncio.gather(*[
-        t.__aenter__() for t in app_capability._mcp_toolsets
+        t.__aenter__() for t in _app_capability._mcp_toolsets
     ])
     logger.info("Agent 启动完成")
 
 
 async def shutdown():
     """应用关闭：断开 MCP 连接"""
-    app_capability = _agent.capabilities[0]
     await asyncio.gather(*[
-        t.__aexit__(None, None, None) for t in app_capability._mcp_toolsets
+        t.__aexit__(None, None, None) for t in _app_capability._mcp_toolsets
     ], return_exceptions=True)
     logger.info("Agent 已关闭")
 

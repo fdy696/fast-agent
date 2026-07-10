@@ -1,73 +1,65 @@
-"""Agent HTTP routes. Uses pydantic-ai's AGUIAdapter for SSE formatting."""
+"""Agent HTTP routes — session CRUD + message lifecycle."""
 
-from fastapi import APIRouter, Depends, Request
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.dependency import CurrentUser
 from db.session import get_db
-from schemas import ChatRequest, ChatResponse, Success
-from services import AgentService, ConversationService
+from repositories.chat_session import ChatSessionRepository
+from services.chat_service import ChatService
 
 router = APIRouter()
 
+@router.post("/sessions", summary="Create session")
+async def create_session(current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    repo = ChatSessionRepository(db)
+    sid = str(uuid.uuid4())
+    session = await repo.create(session_id=sid, user_id=current_user.id)
+    return {"id": session.id, "session_id": session.session_id, "title": session.title, "created_at": session.created_at.isoformat() if session.created_at else None}
 
-@router.post("/chat/completions", summary="AI agent chat completion")
-async def chat_completion(
-    payload: ChatRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    result = await AgentService(db).run(payload, current_user.id)
-    return Success(data=ChatResponse(**result).model_dump())
+@router.get("/sessions", summary="List sessions")
+async def list_sessions(current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    repo = ChatSessionRepository(db)
+    _, sessions = await repo.list_by_user(user_id=current_user.id)
+    return [{"id": s.id, "session_id": s.session_id, "title": s.title, "status": s.status, "updated_at": s.updated_at.isoformat() if s.updated_at else None} for s in sessions]
 
+@router.post("/sessions/{session_id}/archive", summary="Archive session")
+async def archive_session(session_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    repo = ChatSessionRepository(db)
+    session = await repo.get_by_session_id(session_id=session_id, user_id=current_user.id)
+    if not session: raise HTTPException(404, "Session not found")
+    await repo.archive(session)
+    return {"status": "ok"}
 
-@router.post("/chat/stream", summary="Agent SSE streaming chat")
-async def chat_stream(
-    request: Request,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    service = AgentService(db)
-    return await service.stream_ag_ui(request, current_user.id)
+@router.post("/sessions/{session_id}/delete", summary="Soft delete session")
+async def delete_session(session_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    repo = ChatSessionRepository(db)
+    session = await repo.get_by_session_id(session_id=session_id, user_id=current_user.id)
+    if not session: raise HTTPException(404, "Session not found")
+    await repo.soft_delete(session)
+    return {"status": "ok"}
 
+@router.post("/messages", summary="Create pending message")
+async def create_message(body: dict, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    session_id = body.get("session_id")
+    content = body.get("content", "")
+    if not session_id or not content.strip(): raise HTTPException(400, "session_id and content are required")
+    service = ChatService(db)
+    return await service.create_pending_turn(session_id=session_id, user_id=current_user.id, content=content.strip())
 
-@router.post(
-    "/chat/messages/{message_id}/retry", summary="Retry a failed message as SSE"
-)
-async def retry_chat_message(
-    message_id: int,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    return await AgentService(db).retry_stream(message_id, current_user.id)
+@router.post("/messages/{message_id}/stream", summary="Stream execute message")
+async def stream_message(message_id: int, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    service = ChatService(db)
+    return await service.execute_turn(message_id, current_user.id)
 
+@router.post("/messages/{message_id}/retry", summary="Retry failed message")
+async def retry_message(message_id: int, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    service = ChatService(db)
+    return await service.retry_turn(message_id, current_user.id)
 
-@router.post("/create_conversation", summary="Create conversation")
-async def create_conversation(
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    result = await ConversationService(db).create(user_id=current_user.id)
-    return Success(data=result)
-
-
-@router.get("/all_conversation_list", summary="List conversations")
-async def all_conversation_list(
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    data = await ConversationService(db).list_by_user(user_id=current_user.id)
-    return Success(data=data)
-
-
-@router.get("/get_conversation", summary="Get conversation messages")
-async def get_conversation(
-    session_id: str,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # type: ignore[valid-type]
-):
-    data = await ConversationService(db).get_messages(
-        session_id=session_id,
-        user_id=current_user.id,
-    )
-    return Success(data=data)
+@router.get("/messages", summary="Get session messages")
+async def get_messages(session_id: str = Query(...), after_id: int | None = Query(None), current_user: CurrentUser = Depends(), db: AsyncSession = Depends(get_db)):
+    service = ChatService(db)
+    return await service.list_messages(session_id=session_id, user_id=current_user.id, after_id=after_id)

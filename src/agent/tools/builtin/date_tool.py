@@ -7,6 +7,8 @@ from datetime import datetime, timezone, timedelta
 
 
 async def current_time() -> str:
-    """Return the current time in Asia/Shanghai (UTC+8) as an ISO 8601 string."""
+    """Return the current date in Asia/Shanghai (UTC+8)."""
     tz = timezone(timedelta(hours=8))
-    return datetime.now(tz).isoformat()
+    now = datetime.now(tz)
+    weekdays = ['一', '二', '三', '四', '五', '六', '日']
+    return f"{now.strftime('%Y年%-m月%-d日')} 星期{weekdays[now.weekday()]}"

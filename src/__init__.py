@@ -17,8 +17,10 @@ async def lifespan(app: FastAPI):
     await init_data()
     yield
     # Agent 关闭
-    from agent.mcp import close_mcp_servers
-    await close_mcp_servers()
+    from agent.mcp import shutdown_mcp_toolsets
+    await shutdown_mcp_toolsets()
+    from utils.feishu import close_feishu
+    await close_feishu()
     from utils.cache import cache_manager
     await cache_manager.disconnect()
     await close_db()

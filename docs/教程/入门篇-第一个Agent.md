@@ -145,6 +145,9 @@ async def main():
         async for event in result.stream():
             if hasattr(event, 'delta') and event.delta:
                 print(event.delta, end='', flush=True)
+    
+    print(result.usage)
+    print(result)
 
 asyncio.run(main())
 ```

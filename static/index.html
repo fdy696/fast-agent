@@ -34,6 +34,7 @@
   .msg.error { align-self: center; background: #3a1a1a; border: 1px solid var(--accent); font-size: 12px; }
   .msg.system { align-self: center; font-size: 12px; color: var(--dim); }
   .msg pre { background: #0003; padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 6px; }
+  .msg.tool_call pre { white-space: pre-wrap; word-break: break-word; overflow-x: hidden; }
   .msg img { max-width: 300px; border-radius: 8px; margin-top: 6px; }
   .msg table { border-collapse: collapse; margin: 8px 0; width: 100%; }
   .msg th, .msg td { border: 1px solid var(--dim); padding: 6px 10px; text-align: left; font-size: 13px; }
@@ -310,11 +311,15 @@ function handleSSEEvent(d) {
       break;
 
     case 'TOOL_CALL_START':
-      addMsg('tool_call', `🔧 调用工具: <b>${d.toolCallName}</b>\n<pre>${JSON.stringify(d.args, null, 2)}</pre>`);
+      addMsg('tool_call', `🔧 调用工具: <b>${d.toolCallName || d.tool_call_name || '未知'}</b>`);
+      break;
+
+    case 'TOOL_CALL_ARGS':
+      // 追加工具参数
       break;
 
     case 'TOOL_CALL_RESULT':
-      addMsg('tool_result', `📋 工具返回 (${d.ok ? '成功' : '失败'}):\n<pre>${escapeHtml(String(d.content || d.error || ''))}</pre>`);
+      addMsg('tool_result', `📋 工具返回结果:\n<pre>${escapeHtml(String(d.content || ''))}</pre>`);
       break;
 
     case 'RUN_FINISHED':
@@ -327,21 +332,18 @@ function handleSSEEvent(d) {
       addMsg('error', d.message || '运行时错误');
       break;
 
-    // ── Reasoning / Thinking 推理过程 ──
+    // ── Reasoning 推理过程（AG-UI 协议） ──
     case 'REASONING_START':
-    case 'THINKING_START':
       addMsg('system', '🤔 开始推理...');
       break;
 
     case 'REASONING_MESSAGE_START':
-    case 'THINKING_TEXT_MESSAGE_START':
       streamingEl = addMsg('tool_call', '🧠 推理中');
       streamingEl._rawText = '';
       streamingEl._isReasoning = true;
       break;
 
     case 'REASONING_MESSAGE_CONTENT':
-    case 'THINKING_TEXT_MESSAGE_CONTENT':
       if (!streamingEl || !streamingEl._isReasoning) {
         streamingEl = addMsg('tool_call', '🧠 推理中');
         streamingEl._rawText = '';
@@ -353,7 +355,6 @@ function handleSSEEvent(d) {
       break;
 
     case 'REASONING_MESSAGE_END':
-    case 'THINKING_TEXT_MESSAGE_END':
       if (streamingEl && streamingEl._isReasoning) {
         streamingEl.innerHTML = `<b>🧠 推理完成</b>\n<pre>${escapeHtml(streamingEl._rawText || '')}</pre>`;
         delete streamingEl._rawText;
@@ -363,7 +364,6 @@ function handleSSEEvent(d) {
       break;
 
     case 'REASONING_END':
-    case 'THINKING_END':
       if (streamingEl && streamingEl._isReasoning) {
         streamingEl.innerHTML = `<b>🧠 推理完成</b>\n<pre>${escapeHtml(streamingEl._rawText || '')}</pre>`;
         delete streamingEl._rawText;

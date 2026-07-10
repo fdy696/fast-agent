@@ -36,6 +36,7 @@ dependencies = [
     "fastmcp>=3.3.1",
     "pyyaml>=6.0",
     "tiktoken>=0.7.0",
+    "saq>=0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -93,6 +94,11 @@ ignore_missing_imports = true
 
 [tool.pyright]
 reportInvalidTypeForm = false
+
+[tool.uv.workspace]
+members = [
+    "docs/教程",
+]
 
 [dependency-groups]
 dev = [

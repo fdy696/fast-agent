@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-USERNAME_PATTERN = r"^[a-zA-Z0-9_]+$"
+USERNAME_PATTERN = r"^[a-zA-Z0-9_一-龥]+$"
 
 
 class UserBase(BaseModel):
@@ -23,7 +23,7 @@ class UserCreate(UserBase):
     @classmethod
     def validate_username(cls, value: str) -> str:
         if not re.fullmatch(USERNAME_PATTERN, value):
-            raise ValueError("用户名只能包含字母、数字和下划线")
+            raise ValueError("用户名只能包含字母、中文、数字和下划线")
         return value
 
     @field_validator("password")

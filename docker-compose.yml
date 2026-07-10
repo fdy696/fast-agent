@@ -33,6 +33,55 @@ services:
       retries: 5
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    container_name: fast-agent-frontend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  web:
+    build: .
+    container_name: fast-agent-web
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/fast_agent}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DEEP_SEEK_API_KEY=${DEEP_SEEK_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - APPCODE=${APPCODE:-}
+      - AMAP_API_KEY=${AMAP_API_KEY:-}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: fast-agent-worker
+    command: python run_worker.py
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/fast_agent}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DEEP_SEEK_API_KEY=${DEEP_SEEK_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - APPCODE=${APPCODE:-}
+      - AMAP_API_KEY=${AMAP_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   fast_agent_postgres_data:
   fast_agent_redis_data:

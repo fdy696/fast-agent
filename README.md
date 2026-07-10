@@ -98,10 +98,10 @@ PYTHONPATH=src pytest
 
 ## 基础设施容器（Docker）
 
-项目依赖 **PostgreSQL**（pgvector）和 **Redis**，通过 Docker Compose 管理：
+项目依赖 **PostgreSQL**（pgvector）和 **Redis**，全栈通过 Docker Compose 管理：
 
 ```bash
-# 启动所有服务
+# 一键启动全部服务（Web + Worker + PostgreSQL + Redis）
 docker compose up -d
 
 # 查看状态
@@ -113,6 +113,60 @@ docker compose logs -f
 # 停止所有服务
 docker compose down
 ```
+
+### 容器清单
+
+| 服务 | 容器 | 端口 | 说明 |
+|------|------|------|------|
+| Frontend | `fast-agent-frontend` | 3000 | Vue 3 + Vant 移动端前端 |
+| Web | `fast-agent-web` | 8000 | FastAPI 后端 |
+| Worker | `fast-agent-worker` | — | SAQ 任务队列 Worker |
+| PostgreSQL | `fast-agent-postgres` | 5432 | 主数据库（pgvector） |
+| Redis | `fast-agent-redis` | 6379 | 缓存 + SAQ 消息队列 |
+
+## 启动方式
+
+### 开发环境（热重载）
+
+代码修改实时生效，基础设施走 Docker：
+
+```bash
+# Linux / macOS 激活虚拟环境
+source .venv/bin/activate
+
+# 终端 1：基础设施
+docker compose up -d postgres redis
+
+# 终端 2：后端（--reload 热重载）
+uvicorn src:app --reload
+
+# 终端 3：Worker
+PYTHONPATH=src .venv/bin/python run_worker.py
+
+# 前端（在 web/ 目录下）
+cd ../web && pnpm run dev      # localhost:3000
+```
+
+### 生产环境
+
+全栈 Docker，无热重载：
+
+```bash
+# 数据库迁移（首次或 schema 变更时）
+docker compose run --rm web alembic upgrade head
+
+# 启动全部服务
+docker compose up -d
+```
+
+### 任务队列
+
+项目用 SAQ + Redis 替代了 `asyncio.create_task`，保证进程崩溃后异步任务不丢失。4 个后台任务：
+
+- `save_token_usage` — Token 费用审计入库
+- `generate_title` — 会话标题生成
+- `save_reasoning` — 推理步骤保存
+- `send_feishu_alert` — 飞书告警``
 
 > ⚠️ 如果拉取镜像超时，可能是系统代理未配置到 Docker 守护进程，运行以下命令：
 > ```bash

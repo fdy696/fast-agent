@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, NoResultFound, SQLAlchemyError
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from core.exceptions import (
     GeneralExceptionHandle,
     IntegrityHandle,
     NotFoundHandle,
+    PydanticValidationHandle,
     RequestValidationHandle,
     ResponseValidationHandle,
     SQLAlchemyHandle,
@@ -45,7 +47,6 @@ def make_middlewares() -> list[Middleware]:
             exclude_paths=[
                 r"/api/v1/auth/login",
                 r"/api/v1/auth/refresh",
-                # r"/api/v1/agent/chat/stream",
                 r"/docs",
                 r"/redoc",
                 r"/openapi.json",
@@ -64,6 +65,7 @@ def register_exceptions(app: FastAPI) -> None:
     app.add_exception_handler(SQLAlchemyError, SQLAlchemyHandle)
     app.add_exception_handler(RequestValidationError, RequestValidationHandle)
     app.add_exception_handler(ResponseValidationError, ResponseValidationHandle)
+    app.add_exception_handler(ValidationError, PydanticValidationHandle)
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
@@ -87,21 +89,21 @@ async def init_superuser() -> None:
         )
         db.add(admin)
         await db.commit()
-        logger.info("默认管理员账号已创建")
+        logger.info("Default admin account created")
 
 
 async def init_data() -> None:
     await init_superuser()
 
-    from agent.model_client import init_agent
-    init_agent()
+    from agent.mcp import init_mcp_toolsets
+    await init_mcp_toolsets()
 
-    # Agent: 初始化 MCP 连接 + 扫描技能 + 连接缓存
-    from agent.mcp import init_mcp_servers
-    await init_mcp_servers()
-
-    from agent.skills import registry
+    from agent.skills.registry import SkillRegistry
+    registry = SkillRegistry()
     registry.scan_skills()
+
+    from agent.model_client import init_agent
+    init_agent(registry)
 
     from utils.cache import cache_manager
     await cache_manager.connect()
