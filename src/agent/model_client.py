@@ -47,17 +47,15 @@ def init_agent(registry=None) -> Agent:
     toolsets = [*get_mcp_toolsets()]
     if registry is not None:
         toolsets.append(SkillToolset(registry))
+    from pydantic_ai.capabilities import ReinjectSystemPrompt
+
     agent = Agent(
         model,
         toolsets=toolsets,
-        capabilities=[],  # ReinjectSystemPrompt added below
+        capabilities=[ReinjectSystemPrompt()],
     )
     agent.tool_plain(retries=3)(make_guarded("current_time", current_time))
     agent.tool_plain(retries=2)(make_guarded("ask_human", ask_human))
-
-    # Enable system prompt re-injection for summary compatibility
-    from pydantic_ai.capabilities import ReinjectSystemPrompt
-    agent.capabilities.append(ReinjectSystemPrompt())
 
     _agent = agent
     return _agent

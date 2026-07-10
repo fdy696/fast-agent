@@ -45,7 +45,7 @@ docker compose up -d
 alembic upgrade head
 
 # 启动开发服务器
-uvicorn src:app --reload
+uvicorn src:app --reload --port 6000
 ```
 
 > 💡 如果没有 PostgreSQL，可将 `.env` 中 `DATABASE_URL` 改为 SQLite：
@@ -74,10 +74,14 @@ DELETE /api/v1/users/{user_id}
 Agent 接口：
 
 ```text
-POST /api/v1/agent/chat/completions
-POST /api/v1/agent/chat/stream
-POST /api/v1/agent/chat/messages/{message_id}/retry
-GET  /api/v1/agent/get_conversation?session_id=...
+POST /api/v1/agent/sessions
+GET  /api/v1/agent/sessions
+POST /api/v1/agent/sessions/{session_id}/archive
+POST /api/v1/agent/sessions/{session_id}/delete
+POST /api/v1/agent/messages
+POST /api/v1/agent/messages/{message_id}/stream
+POST /api/v1/agent/messages/{message_id}/retry
+GET  /api/v1/agent/messages?session_id=...
 ```
 
 历史消息完整保存在数据库中；只有 `completed` 且包含原生
@@ -119,10 +123,13 @@ docker compose down
 | 服务 | 容器 | 端口 | 说明 |
 |------|------|------|------|
 | Frontend | `fast-agent-frontend` | 3000 | Vue 3 + Vant 移动端前端 |
-| Web | `fast-agent-web` | 8000 | FastAPI 后端 |
+| Web | `fast-agent-web` | 6000 | FastAPI 后端 |
 | Worker | `fast-agent-worker` | — | SAQ 任务队列 Worker |
 | PostgreSQL | `fast-agent-postgres` | 5432 | 主数据库（pgvector） |
 | Redis | `fast-agent-redis` | 6379 | 缓存 + SAQ 消息队列 |
+| Milvus | `milvus-standalone` | 19530 | 向量数据库 |
+| MinIO | `milvus-minio` | 9000 | Milvus 对象存储 |
+| Attu | `milvus-attu` | 8000 | Milvus 管理面板 |
 
 ## 启动方式
 
@@ -138,7 +145,7 @@ source .venv/bin/activate
 docker compose up -d postgres redis
 
 # 终端 2：后端（--reload 热重载）
-uvicorn src:app --reload
+uvicorn src:app --reload --port 6000
 
 # 终端 3：Worker
 PYTHONPATH=src .venv/bin/python run_worker.py

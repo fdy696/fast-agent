@@ -19,15 +19,10 @@ JSON_DICT = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
 
 
 def upgrade() -> None:
-    # Drop old tables
-    op.drop_table("artifacts")
-    op.drop_table("token_usage")
-    op.drop_table("agent_steps")
-    op.drop_constraint("fk_cm_run_id", "conversation_messages", type_="foreignkey")
-    op.drop_constraint("fk_conversations_summary_until_message_id", "conversations", type_="foreignkey")
-    op.drop_table("agent_runs")
-    op.drop_table("conversation_messages")
-    op.drop_table("conversations")
+    # Drop old tables (idempotent — skip if objects don't exist)
+    for tbl in ("artifacts", "token_usage", "agent_steps", "agent_runs",
+                 "conversation_messages", "conversations"):
+        op.execute(sa.text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
 
     # chat_sessions
     op.create_table(
