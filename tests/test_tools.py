@@ -4,7 +4,7 @@ from agent.tools import ask_human, current_time
 async def test_current_time_returns_string():
     result = await current_time()
     assert isinstance(result, str)
-    assert "T" in result  # ISO 8601
+    assert "年" in result and "月" in result and "日" in result and "星期" in result
 
 
 async def test_ask_human_returns_handoff_payload():

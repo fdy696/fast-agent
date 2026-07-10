@@ -60,6 +60,6 @@ async def retry_message(message_id: int, current_user: CurrentUser, db: AsyncSes
     return await service.retry_turn(message_id, current_user.id)
 
 @router.get("/messages", summary="Get session messages")
-async def get_messages(session_id: str = Query(...), after_id: int | None = Query(None), current_user: CurrentUser = Depends(), db: AsyncSession = Depends(get_db)):
+async def get_messages(current_user: CurrentUser, session_id: str = Query(...), after_id: int | None = Query(None), db: AsyncSession = Depends(get_db)):
     service = ChatService(db)
     return await service.list_messages(session_id=session_id, user_id=current_user.id, after_id=after_id)

@@ -12,7 +12,7 @@ from ag_ui.core import RunAgentInput
 from ag_ui.core.events import RunErrorEvent
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic_ai.ag_ui import AGUIAdapter
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
