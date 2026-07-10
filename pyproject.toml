@@ -95,11 +95,6 @@ ignore_missing_imports = true
 [tool.pyright]
 reportInvalidTypeForm = false
 
-[tool.uv.workspace]
-members = [
-    "docs/教程",
-]
-
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",

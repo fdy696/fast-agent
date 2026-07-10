@@ -1,6 +1,6 @@
 """ChatMessage repository — CRUD and history queries."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,9 +18,7 @@ class ChatMessageRepository:
     async def get_by_id_for_update(self, message_id: int) -> ChatMessage | None:
         """Row-locked read for atomic status transitions."""
         result = await self.db.execute(
-            select(ChatMessage)
-            .where(ChatMessage.id == message_id)
-            .with_for_update()
+            select(ChatMessage).where(ChatMessage.id == message_id).with_for_update()
         )
         return result.scalar_one_or_none()
 
@@ -61,7 +59,7 @@ class ChatMessageRepository:
         error_message: str | None = None,
     ) -> ChatMessage:
         msg.status = status
-        msg.updated_at = datetime.now(timezone.utc)
+        msg.updated_at = datetime.now(UTC)
         if error_message is not None:
             msg.error_message = error_message
         await self.db.commit()
@@ -72,14 +70,14 @@ class ChatMessageRepository:
         self, msg: ChatMessage, *, message_data: dict
     ) -> ChatMessage:
         msg.message_data = message_data
-        msg.updated_at = datetime.now(timezone.utc)
+        msg.updated_at = datetime.now(UTC)
         await self.db.commit()
         await self.db.refresh(msg)
         return msg
 
     async def cancel_running_messages(self, *, session_id: str) -> int:
         """Cancel all running and pending messages in a session."""
-        tz = datetime.now(timezone.utc)
+        tz = datetime.now(UTC)
         result = await self.db.execute(
             update(ChatMessage)
             .where(
@@ -90,6 +88,19 @@ class ChatMessageRepository:
         )
         await self.db.commit()
         return result.rowcount
+
+    async def cancel_if_running(self, message_id: int) -> bool:
+        """Cancel a turn without overwriting a concurrently completed result."""
+        result = await self.db.execute(
+            update(ChatMessage)
+            .where(
+                ChatMessage.id == message_id,
+                ChatMessage.status == "running",
+            )
+            .values(status="cancelled", updated_at=datetime.now(UTC))
+        )
+        await self.db.commit()
+        return result.rowcount == 1
 
     async def list_by_session(
         self,
@@ -128,9 +139,7 @@ class ChatMessageRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_by_turn(
-        self, *, turn_id: str
-    ) -> list[ChatMessage]:
+    async def list_by_turn(self, *, turn_id: str) -> list[ChatMessage]:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.turn_id == turn_id)

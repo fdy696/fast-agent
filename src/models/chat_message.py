@@ -5,19 +5,31 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, DateTime, ForeignKey, Index,
-    Integer, String, Text, UniqueConstraint, func,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
 from models.types import JsonDict
 
+MESSAGE_ID_TYPE = BigInteger().with_variant(Integer, "sqlite")
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, index=True)
+    id: Mapped[int] = mapped_column(
+        MESSAGE_ID_TYPE, primary_key=True, autoincrement=True, index=True
+    )
     session_id: Mapped[str] = mapped_column(
         String(128),
         ForeignKey("chat_sessions.session_id", ondelete="CASCADE"),
@@ -36,7 +48,10 @@ class ChatMessage(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     __table_args__ = (

@@ -7,7 +7,12 @@ from fastapi.staticfiles import StaticFiles
 
 from core.config import settings
 from core.dependency import get_current_username
-from core.init_app import init_data, make_middlewares, register_exceptions, register_routers
+from core.init_app import (
+    init_data,
+    make_middlewares,
+    register_exceptions,
+    register_routers,
+)
 from core.rate_limit import limiter
 from db.session import close_db
 
@@ -18,10 +23,13 @@ async def lifespan(app: FastAPI):
     yield
     # Agent 关闭
     from agent.mcp import shutdown_mcp_toolsets
+
     await shutdown_mcp_toolsets()
     from utils.feishu import close_feishu
+
     await close_feishu()
     from utils.cache import cache_manager
+
     await cache_manager.disconnect()
     await close_db()
 
@@ -54,23 +62,32 @@ def create_app() -> FastAPI:
 
     @app.get("/openapi.json", include_in_schema=False)
     async def get_open_api_endpoint(username: str = Depends(get_current_username)):
-        return get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+        return get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
 
     register_exceptions(app)
     register_routers(app, prefix="/api")
 
-    # 调试用：直接生成 token（不需要登录）
-    @app.get("/debug/token")
-    async def debug_token(username: str = "admin"):
-        from core.security import create_access_token
-        token = create_access_token(user_id=1, username=username, is_superuser=True)
-        return {"token": token, "username": username}
+    if settings.DEBUG and settings.APP_ENV == "development":
+        # Local-only debug helpers. Never expose token minting in shared environments.
+        @app.get("/debug/token", include_in_schema=False)
+        async def debug_token(username: str = "admin"):
+            from core.security import create_access_token
 
-    # 挂载调试页面（必须在路由注册之后，否则会拦截 API 路由）
-    import os
-    static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
-    os.makedirs(static_dir, exist_ok=True)
-    app.mount("/debug", StaticFiles(directory=static_dir, html=True))
+            token = create_access_token(user_id=1, username=username, is_superuser=True)
+            return {"token": token, "username": username}
+
+        import os
+
+        static_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "static")
+        )
+        os.makedirs(static_dir, exist_ok=True)
+        app.mount("/debug", StaticFiles(directory=static_dir, html=True))
 
     return app
 
