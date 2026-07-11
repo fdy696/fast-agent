@@ -38,7 +38,7 @@ class ChatContext:
 @dataclass(frozen=True)
 class SummaryContext:
     previous_summary: list[ModelMessage]
-    old_cursor: int
+    old_cursor: int | None
     unsummarized_batches: list[MessageBatch]
 
 
@@ -118,12 +118,12 @@ class ChatRepository:
             if session.summary_message_list
             else []
         )
+        conditions = [ChatMessage.session_id == session_id]
+        if session.summarized_through_message_id is not None:
+            conditions.append(ChatMessage.id > session.summarized_through_message_id)
         rows = await self.db.scalars(
             select(ChatMessage)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.id > session.summarized_through_message_id,
-            )
+            .where(*conditions)
             .order_by(ChatMessage.id)
         )
         batches = []
@@ -190,12 +190,12 @@ class ChatRepository:
             if session.summary_message_list
             else []
         )
+        conditions = [ChatMessage.session_id == session_id]
+        if session.summarized_through_message_id is not None:
+            conditions.append(ChatMessage.id > session.summarized_through_message_id)
         rows = await self.db.scalars(
             select(ChatMessage)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.id > session.summarized_through_message_id,
-            )
+            .where(*conditions)
             .order_by(ChatMessage.id)
         )
         batches = []
@@ -214,14 +214,19 @@ class ChatRepository:
         *,
         session_id: str,
         summary_messages: list[ModelMessage],
-        old_cursor: int,
+        old_cursor: int | None,
         new_cursor: int,
     ) -> bool:
+        cursor_condition = (
+            ChatSession.summarized_through_message_id.is_(None)
+            if old_cursor is None
+            else ChatSession.summarized_through_message_id == old_cursor
+        )
         result = await self.db.execute(
             update(ChatSession)
             .where(
                 ChatSession.session_id == session_id,
-                ChatSession.summarized_through_message_id == old_cursor,
+                cursor_condition,
             )
             .values(
                 summary_message_list=to_jsonable_python(summary_messages),

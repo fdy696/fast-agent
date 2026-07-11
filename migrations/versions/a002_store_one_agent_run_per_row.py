@@ -37,8 +37,7 @@ def upgrade() -> None:
         sa.Column(
             "summarized_through_message_id",
             sa.BigInteger(),
-            server_default="0",
-            nullable=False,
+            nullable=True,
         ),
         sa.Column(
             "created_at",
