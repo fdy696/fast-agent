@@ -1,0 +1,10 @@
+[project]
+name = "py"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=2.44.0",
+    "pydantic-ai>=2.0.0",
+]

@@ -1,0 +1,1182 @@
+diff --git a/migrations/versions/a001_rebuild_chat_schema.py b/migrations/versions/a001_rebuild_chat_schema.py
+index b31c5c8..f3f7fe7 100644
+--- a/migrations/versions/a001_rebuild_chat_schema.py
++++ b/migrations/versions/a001_rebuild_chat_schema.py
+@@ -5,24 +5,35 @@ Revises: dd788e00562f
+ Create Date: 2026-07-10
+ """
+ 
+-from typing import Sequence, Union
+-from alembic import op
++from collections.abc import Sequence
++
+ import sqlalchemy as sa
++from alembic import op
+ from sqlalchemy.dialects import postgresql
+ 
+ revision: str = "a001_rebuild_chat_schema"
+-down_revision: Union[str, None] = "dd788e00562f"
+-branch_labels: Union[str, Sequence[str], None] = None
+-depends_on: Union[str, Sequence[str], None] = None
++down_revision: str | None = "dd788e00562f"
++branch_labels: str | Sequence[str] | None = None
++depends_on: str | Sequence[str] | None = None
+ 
+ JSON_DICT = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
++MESSAGE_ID = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
+ 
+ 
+ def upgrade() -> None:
+-    # Drop old tables (idempotent — skip if objects don't exist)
+-    for tbl in ("artifacts", "token_usage", "agent_steps", "agent_runs",
+-                 "conversation_messages", "conversations"):
+-        op.execute(sa.text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
++    bind = op.get_bind()
++    cascade = " CASCADE" if bind.dialect.name == "postgresql" else ""
++
++    # This revision intentionally replaces the legacy history schema.
++    for tbl in (
++        "artifacts",
++        "token_usage",
++        "agent_steps",
++        "agent_runs",
++        "conversation_messages",
++        "conversations",
++    ):
++        op.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}{cascade}"))
+ 
+     # chat_sessions
+     op.create_table(
+@@ -35,12 +46,29 @@ def upgrade() -> None:
+         sa.Column("history_summary", sa.Text(), nullable=True),
+         sa.Column("summarized_through_message_id", sa.BigInteger(), nullable=True),
+         sa.Column("summary_updated_at", sa.DateTime(timezone=True), nullable=True),
+-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column(
++            "created_at",
++            sa.DateTime(timezone=True),
++            server_default=sa.func.now(),
++            nullable=False,
++        ),
++        sa.Column(
++            "updated_at",
++            sa.DateTime(timezone=True),
++            server_default=sa.func.now(),
++            nullable=False,
++        ),
+         sa.PrimaryKeyConstraint("id"),
+         sa.UniqueConstraint("session_id"),
+-        sa.CheckConstraint("status IN ('active','archived','deleted')", name="ck_chat_sessions_status"),
+-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_chat_sessions_user_id", ondelete="RESTRICT"),
++        sa.CheckConstraint(
++            "status IN ('active','archived','deleted')", name="ck_chat_sessions_status"
++        ),
++        sa.ForeignKeyConstraint(
++            ["user_id"],
++            ["users.id"],
++            name="fk_chat_sessions_user_id",
++            ondelete="RESTRICT",
++        ),
+     )
+     op.create_index("ix_chat_sessions_id", "chat_sessions", ["id"])
+     op.create_index("ix_chat_sessions_session_id", "chat_sessions", ["session_id"])
+@@ -48,7 +76,7 @@ def upgrade() -> None:
+     # chat_messages
+     op.create_table(
+         "chat_messages",
+-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
++        sa.Column("id", MESSAGE_ID, autoincrement=True, nullable=False),
+         sa.Column("session_id", sa.String(128), nullable=False),
+         sa.Column("turn_id", sa.String(36), nullable=False),
+         sa.Column("message_index", sa.Integer(), nullable=False),
+@@ -58,33 +86,67 @@ def upgrade() -> None:
+         sa.Column("message_data", JSON_DICT, nullable=True),
+         sa.Column("error_message", sa.Text(), nullable=True),
+         sa.Column("retry_count", sa.Integer(), nullable=False, server_default="0"),
+-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column(
++            "created_at",
++            sa.DateTime(timezone=True),
++            server_default=sa.func.now(),
++            nullable=False,
++        ),
++        sa.Column(
++            "updated_at",
++            sa.DateTime(timezone=True),
++            server_default=sa.func.now(),
++            nullable=False,
++        ),
+         sa.PrimaryKeyConstraint("id"),
+         sa.CheckConstraint(
+             "status IN ('pending','running','completed','failed','cancelled')",
+             name="ck_chat_message_status",
+         ),
+-        sa.UniqueConstraint("turn_id", "message_index", name="uq_chat_message_turn_index"),
++        sa.UniqueConstraint(
++            "turn_id", "message_index", name="uq_chat_message_turn_index"
++        ),
+         sa.ForeignKeyConstraint(
+-            ["session_id"], ["chat_sessions.session_id"],
+-            name="fk_chat_messages_session_id", ondelete="CASCADE",
++            ["session_id"],
++            ["chat_sessions.session_id"],
++            name="fk_chat_messages_session_id",
++            ondelete="CASCADE",
+         ),
+     )
+     op.create_index("ix_chat_messages_id", "chat_messages", ["id"])
+     op.create_index("ix_chat_messages_session_id", "chat_messages", ["session_id"])
+     op.create_index("ix_chat_messages_turn_id", "chat_messages", ["turn_id"])
+-    op.create_index("idx_cm_session_status_id", "chat_messages", ["session_id", "status", "id"])
+-
+-    op.create_foreign_key(
+-        "fk_chat_sessions_summary_msg",
+-        "chat_sessions", "chat_messages",
+-        ["summarized_through_message_id"], ["id"],
+-        ondelete="SET NULL",
++    op.create_index(
++        "idx_cm_session_status_id", "chat_messages", ["session_id", "status", "id"]
+     )
+ 
++    if bind.dialect.name == "sqlite":
++        with op.batch_alter_table("chat_sessions") as batch_op:
++            batch_op.create_foreign_key(
++                "fk_chat_sessions_summary_msg",
++                "chat_messages",
++                ["summarized_through_message_id"],
++                ["id"],
++                ondelete="SET NULL",
++            )
++    else:
++        op.create_foreign_key(
++            "fk_chat_sessions_summary_msg",
++            "chat_sessions",
++            "chat_messages",
++            ["summarized_through_message_id"],
++            ["id"],
++            ondelete="SET NULL",
++        )
++
+ 
+ def downgrade() -> None:
+-    op.drop_constraint("fk_chat_sessions_summary_msg", "chat_sessions", type_="foreignkey")
++    if op.get_bind().dialect.name == "sqlite":
++        with op.batch_alter_table("chat_sessions") as batch_op:
++            batch_op.drop_constraint("fk_chat_sessions_summary_msg", type_="foreignkey")
++    else:
++        op.drop_constraint(
++            "fk_chat_sessions_summary_msg", "chat_sessions", type_="foreignkey"
++        )
+     op.drop_table("chat_messages")
+     op.drop_table("chat_sessions")
+diff --git a/pyproject.toml b/pyproject.toml
+index 3dbb837..91bd77b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -95,11 +95,6 @@ ignore_missing_imports = true
+ [tool.pyright]
+ reportInvalidTypeForm = false
+ 
+-[tool.uv.workspace]
+-members = [
+-    "docs/教程",
+-]
+-
+ [dependency-groups]
+ dev = [
+     "httpx>=0.28.1",
+diff --git a/src/__init__.py b/src/__init__.py
+index 7c6ec85..da82698 100644
+--- a/src/__init__.py
++++ b/src/__init__.py
+@@ -7,7 +7,12 @@ from fastapi.staticfiles import StaticFiles
+ 
+ from core.config import settings
+ from core.dependency import get_current_username
+-from core.init_app import init_data, make_middlewares, register_exceptions, register_routers
++from core.init_app import (
++    init_data,
++    make_middlewares,
++    register_exceptions,
++    register_routers,
++)
+ from core.rate_limit import limiter
+ from db.session import close_db
+ 
+@@ -18,10 +23,13 @@ async def lifespan(app: FastAPI):
+     yield
+     # Agent 关闭
+     from agent.mcp import shutdown_mcp_toolsets
++
+     await shutdown_mcp_toolsets()
+     from utils.feishu import close_feishu
++
+     await close_feishu()
+     from utils.cache import cache_manager
++
+     await cache_manager.disconnect()
+     await close_db()
+ 
+@@ -54,23 +62,32 @@ def create_app() -> FastAPI:
+ 
+     @app.get("/openapi.json", include_in_schema=False)
+     async def get_open_api_endpoint(username: str = Depends(get_current_username)):
+-        return get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
++        return get_openapi(
++            title=app.title,
++            version=app.version,
++            description=app.description,
++            routes=app.routes,
++        )
+ 
+     register_exceptions(app)
+     register_routers(app, prefix="/api")
+ 
+-    # 调试用：直接生成 token（不需要登录）
+-    @app.get("/debug/token")
+-    async def debug_token(username: str = "admin"):
+-        from core.security import create_access_token
+-        token = create_access_token(user_id=1, username=username, is_superuser=True)
+-        return {"token": token, "username": username}
+-
+-    # 挂载调试页面（必须在路由注册之后，否则会拦截 API 路由）
+-    import os
+-    static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+-    os.makedirs(static_dir, exist_ok=True)
+-    app.mount("/debug", StaticFiles(directory=static_dir, html=True))
++    if settings.DEBUG and settings.APP_ENV == "development":
++        # Local-only debug helpers. Never expose token minting in shared environments.
++        @app.get("/debug/token", include_in_schema=False)
++        async def debug_token(username: str = "admin"):
++            from core.security import create_access_token
++
++            token = create_access_token(user_id=1, username=username, is_superuser=True)
++            return {"token": token, "username": username}
++
++        import os
++
++        static_dir = os.path.abspath(
++            os.path.join(os.path.dirname(__file__), "..", "static")
++        )
++        os.makedirs(static_dir, exist_ok=True)
++        app.mount("/debug", StaticFiles(directory=static_dir, html=True))
+ 
+     return app
+ 
+diff --git a/src/models/chat_message.py b/src/models/chat_message.py
+index 37d15fc..52a22b7 100644
+--- a/src/models/chat_message.py
++++ b/src/models/chat_message.py
+@@ -5,19 +5,31 @@ from __future__ import annotations
+ from datetime import datetime
+ 
+ from sqlalchemy import (
+-    BigInteger, CheckConstraint, DateTime, ForeignKey, Index,
+-    Integer, String, Text, UniqueConstraint, func,
++    BigInteger,
++    CheckConstraint,
++    DateTime,
++    ForeignKey,
++    Index,
++    Integer,
++    String,
++    Text,
++    UniqueConstraint,
++    func,
+ )
+ from sqlalchemy.orm import Mapped, mapped_column
+ 
+ from db.base import Base
+ from models.types import JsonDict
+ 
++MESSAGE_ID_TYPE = BigInteger().with_variant(Integer, "sqlite")
++
+ 
+ class ChatMessage(Base):
+     __tablename__ = "chat_messages"
+ 
+-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, index=True)
++    id: Mapped[int] = mapped_column(
++        MESSAGE_ID_TYPE, primary_key=True, autoincrement=True, index=True
++    )
+     session_id: Mapped[str] = mapped_column(
+         String(128),
+         ForeignKey("chat_sessions.session_id", ondelete="CASCADE"),
+@@ -36,7 +48,10 @@ class ChatMessage(Base):
+         DateTime(timezone=True), server_default=func.now(), nullable=False
+     )
+     updated_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
++        DateTime(timezone=True),
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
+     )
+ 
+     __table_args__ = (
+diff --git a/src/repositories/chat_message.py b/src/repositories/chat_message.py
+index 6a8871d..ed00d78 100644
+--- a/src/repositories/chat_message.py
++++ b/src/repositories/chat_message.py
+@@ -1,6 +1,6 @@
+ """ChatMessage repository — CRUD and history queries."""
+ 
+-from datetime import datetime, timezone
++from datetime import UTC, datetime
+ 
+ from sqlalchemy import select, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -18,9 +18,7 @@ class ChatMessageRepository:
+     async def get_by_id_for_update(self, message_id: int) -> ChatMessage | None:
+         """Row-locked read for atomic status transitions."""
+         result = await self.db.execute(
+-            select(ChatMessage)
+-            .where(ChatMessage.id == message_id)
+-            .with_for_update()
++            select(ChatMessage).where(ChatMessage.id == message_id).with_for_update()
+         )
+         return result.scalar_one_or_none()
+ 
+@@ -61,7 +59,7 @@ class ChatMessageRepository:
+         error_message: str | None = None,
+     ) -> ChatMessage:
+         msg.status = status
+-        msg.updated_at = datetime.now(timezone.utc)
++        msg.updated_at = datetime.now(UTC)
+         if error_message is not None:
+             msg.error_message = error_message
+         await self.db.commit()
+@@ -72,14 +70,14 @@ class ChatMessageRepository:
+         self, msg: ChatMessage, *, message_data: dict
+     ) -> ChatMessage:
+         msg.message_data = message_data
+-        msg.updated_at = datetime.now(timezone.utc)
++        msg.updated_at = datetime.now(UTC)
+         await self.db.commit()
+         await self.db.refresh(msg)
+         return msg
+ 
+     async def cancel_running_messages(self, *, session_id: str) -> int:
+         """Cancel all running and pending messages in a session."""
+-        tz = datetime.now(timezone.utc)
++        tz = datetime.now(UTC)
+         result = await self.db.execute(
+             update(ChatMessage)
+             .where(
+@@ -91,6 +89,19 @@ class ChatMessageRepository:
+         await self.db.commit()
+         return result.rowcount
+ 
++    async def cancel_if_running(self, message_id: int) -> bool:
++        """Cancel a turn without overwriting a concurrently completed result."""
++        result = await self.db.execute(
++            update(ChatMessage)
++            .where(
++                ChatMessage.id == message_id,
++                ChatMessage.status == "running",
++            )
++            .values(status="cancelled", updated_at=datetime.now(UTC))
++        )
++        await self.db.commit()
++        return result.rowcount == 1
++
+     async def list_by_session(
+         self,
+         *,
+@@ -128,9 +139,7 @@ class ChatMessageRepository:
+         result = await self.db.execute(stmt)
+         return list(result.scalars().all())
+ 
+-    async def list_by_turn(
+-        self, *, turn_id: str
+-    ) -> list[ChatMessage]:
++    async def list_by_turn(self, *, turn_id: str) -> list[ChatMessage]:
+         stmt = (
+             select(ChatMessage)
+             .where(ChatMessage.turn_id == turn_id)
+diff --git a/src/services/chat_service.py b/src/services/chat_service.py
+index a99ff1c..3da501e 100644
+--- a/src/services/chat_service.py
++++ b/src/services/chat_service.py
+@@ -3,16 +3,15 @@
+ from __future__ import annotations
+ 
+ import asyncio
+-import logging
+ import uuid
+ from collections import defaultdict
+-from typing import Any
++from contextlib import suppress
++from datetime import UTC
+ 
+ from ag_ui.core import RunAgentInput
+ from ag_ui.core.events import RunErrorEvent
+ from fastapi import HTTPException
+ from fastapi.responses import StreamingResponse
+-from pydantic_ai.ui.ag_ui import AGUIAdapter
+ from pydantic_ai.exceptions import UsageLimitExceeded
+ from pydantic_ai.messages import (
+     ModelMessage,
+@@ -21,10 +20,10 @@ from pydantic_ai.messages import (
+     ModelResponse,
+     SystemPromptPart,
+     TextPart,
+-    ThinkingPart,
+     ToolReturnPart,
+     UserPromptPart,
+ )
++from pydantic_ai.ui.ag_ui import AGUIAdapter
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from agent.model_client import call_compress_model, get_agent
+@@ -136,30 +135,27 @@ class ChatService:
+         )
+         if not session:
+             raise HTTPException(404, "Session not found")
+-        cancelled = await self.msg_repo.cancel_running_messages(
+-            session_id=session_id
+-        )
++        cancelled = await self.msg_repo.cancel_running_messages(session_id=session_id)
+         if cancelled:
+             logger.info("Cancelled %d messages in session %s", cancelled, session_id)
+-        try:
+-            from utils.cache import cache_manager
+-            await cache_manager._client.delete(f"lock:chat:{session_id}")
+-        except Exception:
+-            pass
+         turn_id = self._new_turn_id()
+         msg = await self.msg_repo.insert(
+-            session_id=session_id, turn_id=turn_id,
+-            message_index=0, status="pending", role="user", content=content,
++            session_id=session_id,
++            turn_id=turn_id,
++            message_index=0,
++            status="pending",
++            role="user",
++            content=content,
+         )
+         return {
+-            "id": msg.id, "turn_id": msg.turn_id,
+-            "session_id": msg.session_id, "status": msg.status,
++            "id": msg.id,
++            "turn_id": msg.turn_id,
++            "session_id": msg.session_id,
++            "status": msg.status,
+             "created_at": msg.created_at.isoformat() if msg.created_at else None,
+         }
+ 
+-    async def execute_turn(
+-        self, message_id: int, user_id: int
+-    ) -> StreamingResponse:
++    async def execute_turn(self, message_id: int, user_id: int) -> StreamingResponse:
+         msg = await self.msg_repo.get_by_id_for_update(message_id)
+         if not msg:
+             raise HTTPException(404, "Message not found")
+@@ -172,12 +168,41 @@ class ChatService:
+             raise HTTPException(409, f"Cannot execute message in status {msg.status}")
+         try:
+             from utils.cache import cache_manager
++
+             redis = cache_manager._client
+         except Exception:
+             redis = None
+         lock_key = f"lock:chat:{msg.session_id}"
++        lock_token = str(uuid.uuid4())
++
++        async def release_lock() -> None:
++            if not redis:
++                return
++            script = (
++                "if redis.call('get', KEYS[1]) == ARGV[1] then "
++                "return redis.call('del', KEYS[1]) else return 0 end"
++            )
++            try:
++                await redis.eval(script, 1, lock_key, lock_token)
++            except Exception:
++                logger.exception("Failed to release chat lock %s", lock_key)
++
++        async def refresh_lock() -> None:
++            if not redis:
++                return
++            script = (
++                "if redis.call('get', KEYS[1]) == ARGV[1] then "
++                "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
++            )
++            while True:
++                await asyncio.sleep(30)
++                refreshed = await redis.eval(script, 1, lock_key, lock_token, 120)
++                if not refreshed:
++                    logger.error("Lost ownership of chat lock %s", lock_key)
++                    return
++
+         if redis:
+-            acquired = await redis.set(lock_key, "1", nx=True, ex=120)
++            acquired = await redis.set(lock_key, lock_token, nx=True, ex=120)
+             if not acquired:
+                 raise HTTPException(423, "Session is busy, please retry")
+         try:
+@@ -187,91 +212,119 @@ class ChatService:
+             await self.msg_repo.update_status(msg, "running")
+             msg.retry_count = retry_count
+             history = await build_model_history(
+-                self.db, session_id=msg.session_id,
++                self.db,
++                session_id=msg.session_id,
++                user_id=user_id,
+                 before_message_id=msg.id,
+             )
+             agent = get_agent()
+             system_prompt = default_system_prompt()
+             run_input = RunAgentInput(
+-                thread_id=msg.session_id, run_id=msg.turn_id,
++                thread_id=msg.session_id,
++                run_id=msg.turn_id,
+                 messages=[{"role": "user", "content": msg.content or ""}],
+-                tools=[], context=[], forwardedProps={}, state={},
++                tools=[],
++                context=[],
++                forwardedProps={},
++                state={},
+             )
+             adapter = AGUIAdapter(
+-                agent=agent, run_input=run_input, manage_system_prompt="client",
++                agent=agent,
++                run_input=run_input,
++                manage_system_prompt="client",
+             )
+ 
+             async def on_complete(agent_result):
+                 await self._commit_turn(message_id, agent_result, session)
+ 
+-            continue_count = 0
+-
+             async def event_stream():
+-                nonlocal continue_count
+                 event_count = 0
+-                while True:
+-                    try:
+-                        async for event in adapter.run_stream(
+-                            message_history=history,
+-                            conversation_id=msg.session_id,
+-                            instructions=system_prompt,
+-                            on_complete=on_complete if continue_count == 0 else None,
+-                        ):
+-                            event_count += 1
+-                            if event_count % 10 == 0:
+-                                from db.session import AsyncSessionLocal
+-                                async with AsyncSessionLocal() as check_db:
+-                                    check_repo = ChatMessageRepository(check_db)
+-                                    current = await check_repo.get_by_id(msg.id)
+-                                    if current and current.status == "cancelled":
+-                                        logger.info("Turn %s cancelled mid-stream", msg.turn_id)
+-                                        raise asyncio.CancelledError()
+-                            yield event
+-                        break
+-                    except Exception as exc:
+-                        if _is_usage_limit(exc) and continue_count < 2:
+-                            continue_count += 1
+-                            logger.info("Token limit reached, auto-continuing (%d/2)", continue_count)
+-                            continue
+-                        if isinstance(exc, asyncio.CancelledError):
+-                            await self.msg_repo.update_status(msg, "cancelled")
+-                            yield RunErrorEvent(message="Cancelled", code="cancelled")
+-                            break
++                refresh_task = asyncio.create_task(refresh_lock()) if redis else None
++                try:
++                    async for event in adapter.run_stream(
++                        message_history=history,
++                        conversation_id=msg.session_id,
++                        instructions=system_prompt,
++                        on_complete=on_complete,
++                    ):
++                        event_count += 1
++                        if event_count % 10 == 0:
++                            from db.session import AsyncSessionLocal
++
++                            async with AsyncSessionLocal() as check_db:
++                                check_repo = ChatMessageRepository(check_db)
++                                current = await check_repo.get_by_id(msg.id)
++                                if current and current.status == "cancelled":
++                                    logger.info(
++                                        "Turn %s cancelled mid-stream", msg.turn_id
++                                    )
++                                    yield RunErrorEvent(
++                                        message="Cancelled", code="cancelled"
++                                    )
++                                    return
++                        yield event
++                except asyncio.CancelledError:
++                    await self.msg_repo.cancel_if_running(msg.id)
++                    raise
++                except Exception as exc:
++                    if _is_usage_limit(exc):
++                        logger.warning("Usage limit reached for turn %s", msg.turn_id)
++                    else:
+                         logger.exception("Agent stream failed for %s", msg.session_id)
+-                        await self.msg_repo.update_status(msg, "failed", error_message=str(exc)[:500])
+-                        yield RunErrorEvent(message=str(exc), code="stream_error")
+-                        break
++                    await self.msg_repo.update_status(
++                        msg, "failed", error_message=str(exc)[:500]
++                    )
++                    yield RunErrorEvent(message=str(exc), code="stream_error")
++                finally:
++                    if refresh_task:
++                        refresh_task.cancel()
++                        with suppress(asyncio.CancelledError):
++                            await refresh_task
++                    await release_lock()
+ 
+             return adapter.streaming_response(event_stream())
+-        finally:
+-            if redis:
+-                await redis.delete(lock_key)
++        except BaseException:
++            await release_lock()
++            raise
+ 
+     async def _commit_turn(self, message_id: int, agent_result, session) -> None:
+-        from datetime import datetime, timezone
++        from datetime import datetime
++
+         from models.chat_message import ChatMessage as ChatMessageModel
++
+         new_messages = agent_result.new_messages()
+         serialized = ModelMessagesTypeAdapter.dump_python(new_messages, mode="json")
+         pending = await self.msg_repo.get_by_id(message_id)
+         if not pending or pending.status == "cancelled":
+             return
+-        now = datetime.now(timezone.utc)
++        now = datetime.now(UTC)
+         pending.message_data = serialized[0]
+         pending.status = "completed"
+         pending.updated_at = now
+         for i, msg_data in enumerate(serialized[1:], start=1):
+             role = _infer_role(msg_data)
+             content = _extract_content(msg_data)
+-            self.db.add(ChatMessageModel(
+-                session_id=pending.session_id, turn_id=pending.turn_id,
+-                message_index=i, status="completed", role=role,
+-                content=content, message_data=msg_data,
+-            ))
++            self.db.add(
++                ChatMessageModel(
++                    session_id=pending.session_id,
++                    turn_id=pending.turn_id,
++                    message_index=i,
++                    status="completed",
++                    role=role,
++                    content=content,
++                    message_data=msg_data,
++                )
++            )
+         await self.db.commit()
+         await self.session_repo.touch(session)
+         try:
+             from utils.queue import queue
+-            await queue.enqueue("generate_title", session_id=session.session_id, first_msg=pending.content)
++
++            await queue.enqueue(
++                "generate_title",
++                session_id=session.session_id,
++                first_msg=pending.content,
++            )
+         except Exception:
+             pass
+ 
+@@ -296,9 +349,12 @@ class ChatService:
+         )
+         return [
+             {
+-                "id": m.id, "turn_id": m.turn_id,
+-                "message_index": m.message_index, "status": m.status,
+-                "role": m.role, "content": m.content,
++                "id": m.id,
++                "turn_id": m.turn_id,
++                "message_index": m.message_index,
++                "status": m.status,
++                "role": m.role,
++                "content": m.content,
+                 "error_message": m.error_message,
+                 "created_at": m.created_at.isoformat() if m.created_at else None,
+             }
+@@ -307,12 +363,16 @@ class ChatService:
+ 
+ 
+ async def build_model_history(
+-    db: AsyncSession, *, session_id: str, before_message_id: int,
++    db: AsyncSession,
++    *,
++    session_id: str,
++    user_id: int,
++    before_message_id: int,
+ ) -> list[ModelMessage]:
+     session_repo = ChatSessionRepository(db)
+     msg_repo = ChatMessageRepository(db)
+     session = await session_repo.get_by_session_id(
+-        session_id=session_id, user_id=0
++        session_id=session_id, user_id=user_id
+     )
+     if not session:
+         return []
+@@ -327,8 +387,7 @@ async def build_model_history(
+     turns = list(turns_map.values())
+     turns.sort(key=lambda t: t[0].id)
+     total_chars = sum(
+-        len(m.content or "") + len(str(m.message_data or {}))
+-        for t in turns for m in t
++        len(m.content or "") + len(str(m.message_data or {})) for t in turns for m in t
+     )
+     estimated_tokens = max(1, total_chars // 3)
+     need = (
+@@ -339,7 +398,7 @@ async def build_model_history(
+         try:
+             await compact_history(db, session, turns)
+             session = await session_repo.get_by_session_id(
+-                session_id=session_id, user_id=0
++                session_id=session_id, user_id=user_id
+             )
+             if session:
+                 messages = await msg_repo.list_completed_turns(
+@@ -354,36 +413,38 @@ async def build_model_history(
+                 turns.sort(key=lambda t: t[0].id)
+         except Exception:
+             logger.exception("Summary compaction failed, using recent window")
+-    recent_turns = turns[-KEEP_RECENT_TURNS:] if len(turns) > KEEP_RECENT_TURNS else turns
++    recent_turns = (
++        turns[-KEEP_RECENT_TURNS:] if len(turns) > KEEP_RECENT_TURNS else turns
++    )
+     result: list[ModelMessage] = []
+     if session and session.history_summary:
+         result.append(
+-            ModelRequest(parts=[
+-                SystemPromptPart(
+-                    content=f"较早对话摘要，仅作为历史上下文：\n{session.history_summary}"
+-                )
+-            ])
++            ModelRequest(
++                parts=[
++                    SystemPromptPart(
++                        content=f"较早对话摘要，仅作为历史上下文：\n{session.history_summary}"
++                    )
++                ]
++            )
+         )
+     for turn in recent_turns:
+         for m in turn:
+             if m.message_data:
+                 try:
+-                    native = ModelMessagesTypeAdapter.validate_python(m.message_data)
+-                    if isinstance(native, list):
+-                        result.extend(native)
+-                    else:
+-                        result.append(native)
++                    native = ModelMessagesTypeAdapter.validate_python([m.message_data])
++                    result.extend(native)
+                 except Exception:
+-                    logger.warning("Failed to deserialize message %d", m.id)
++                    logger.warning("Failed to deserialize message {}", m.id)
+     return result
+ 
+ 
+ async def compact_history(db: AsyncSession, session, turns: list[list]) -> None:
+-    from datetime import datetime, timezone
++    from datetime import datetime
++
+     from sqlalchemy import update
++
+     from models.chat_session import ChatSession
+-    from openai.types.chat import ChatCompletionMessageParam
+-    session_repo = ChatSessionRepository(db)
++
+     old_cursor = session.summarized_through_message_id
+     if len(turns) <= KEEP_RECENT_TURNS:
+         return
+@@ -393,26 +454,34 @@ async def compact_history(db: AsyncSession, session, turns: list[list]) -> None:
+         for m in turn:
+             if m.message_data:
+                 try:
+-                    msg = ModelMessagesTypeAdapter.validate_python(m.message_data)
+-                    if isinstance(msg, list):
+-                        native_msgs.extend(msg)
+-                    else:
+-                        native_msgs.append(msg)
++                    native_msgs.extend(
++                        ModelMessagesTypeAdapter.validate_python([m.message_data])
++                    )
+                 except Exception:
+                     pass
+     old_summary = session.history_summary or ""
+     projection = text_projection(native_msgs)
+     compress_messages: list[dict] = []
+     if old_summary:
+-        compress_messages.append({"role": "system", "content": "以下是较早对话的摘要，请在新摘要中保留其中的关键信息。"})
+-        compress_messages.append({"role": "user", "content": f"旧摘要：\n{old_summary}\n\n新对话：\n{projection}"})
++        compress_messages.append(
++            {
++                "role": "system",
++                "content": "以下是较早对话的摘要，请在新摘要中保留其中的关键信息。",
++            }
++        )
++        compress_messages.append(
++            {
++                "role": "user",
++                "content": f"旧摘要：\n{old_summary}\n\n新对话：\n{projection}",
++            }
++        )
+     else:
+         compress_messages.append({"role": "system", "content": summarization_prompt()})
+         compress_messages.append({"role": "user", "content": projection})
+     try:
+         result = await call_compress_model(compress_messages)
+         new_summary = result.choices[0].message.content or ""
+-        new_summary = new_summary[:MAX_SUMMARY_CHARS * 2]
++        new_summary = new_summary[: MAX_SUMMARY_CHARS * 2]
+     except Exception:
+         logger.exception("Summary model call failed")
+         return
+@@ -420,7 +489,7 @@ async def compact_history(db: AsyncSession, session, turns: list[list]) -> None:
+         return
+     last_compact_turn = compact_turns[-1]
+     new_cursor = last_compact_turn[-1].id
+-    now = datetime.now(timezone.utc)
++    now = datetime.now(UTC)
+     update_result = await db.execute(
+         update(ChatSession)
+         .where(
+@@ -438,4 +507,8 @@ async def compact_history(db: AsyncSession, session, turns: list[list]) -> None:
+     if update_result.rowcount == 0:
+         logger.info("Summary CAS: no rows updated, another worker beat us")
+     else:
+-        logger.info("Summary CAS: compacted %d turns, new cursor=%d", len(compact_turns), new_cursor)
++        logger.info(
++            "Summary CAS: compacted %d turns, new cursor=%d",
++            len(compact_turns),
++            new_cursor,
++        )
+diff --git a/tests/test_agent_loop.py b/tests/test_agent_loop.py
+index 64609ef..97e8807 100644
+--- a/tests/test_agent_loop.py
++++ b/tests/test_agent_loop.py
+@@ -1,40 +1,23 @@
+-"""Agent orchestration tests for native history and durable state."""
++"""Focused tests for the current ChatService/PydanticAI integration."""
+ 
+-from unittest.mock import AsyncMock, MagicMock, patch
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
+ 
+ import pytest
+-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
++from pydantic_ai.messages import (
++    ModelMessagesTypeAdapter,
++    ModelRequest,
++    ModelResponse,
++    TextPart,
++    UserPromptPart,
++)
+ 
+ from agent.model_client import ModelClientError
+-from schemas.agent import ChatRequest
++from services.chat_service import build_model_history
+ 
+ 
+-def test_normalize_ag_ui_body_accepts_simple_payload():
+-    from services.agent_service import AgentService
+-
+-    body = AgentService._normalize_ag_ui_body({"message": "hello"}, user_id=123)
+-    assert body["messages"][0]["content"] == "hello"
+-    assert body["messages"][0]["user"]["id"] == "123"
+-    assert body["threadId"]
+-    assert body["runId"]
+-
+-
+-def test_normalize_ag_ui_body_discards_untrusted_client_history():
+-    from services.agent_service import AgentService
+-
+-    body = AgentService._normalize_ag_ui_body(
+-        {
+-            "threadId": "thread-1",
+-            "messages": [
+-                {"role": "user", "content": "old question"},
+-                {"role": "assistant", "content": "old answer"},
+-                {"role": "user", "content": "current question"},
+-            ],
+-        },
+-        user_id=123,
+-    )
+-    assert len(body["messages"]) == 1
+-    assert body["messages"][0]["content"] == "current question"
++def _stored(message):
++    return ModelMessagesTypeAdapter.dump_python([message], mode="json")[0]
+ 
+ 
+ def test_init_agent_requires_model_key(monkeypatch):
+@@ -47,82 +30,48 @@ def test_init_agent_requires_model_key(monkeypatch):
+         model_client.init_agent()
+ 
+ 
+-async def test_run_persists_native_messages():
+-    from services.agent_service import AgentService
+-
+-    mock_db = AsyncMock()
+-    conversation = MagicMock(
+-        id=1, session_id="sess-1", summary=None, summary_until_message_id=None
++async def test_build_history_uses_authenticated_user_scope():
++    session = SimpleNamespace(
++        history_summary=None,
++        summarized_through_message_id=None,
+     )
+-    pending = MagicMock(id=10, conversation_id=1, user_id=1, content="hello")
+-    native = [
+-        ModelRequest(parts=[UserPromptPart(content="hello")]),
+-        ModelResponse(parts=[TextPart(content="hi")], model_name="test"),
++    rows = [
++        SimpleNamespace(
++            id=1,
++            turn_id="turn-1",
++            content="question",
++            message_data=_stored(
++                ModelRequest(parts=[UserPromptPart(content="question")])
++            ),
++        ),
++        SimpleNamespace(
++            id=2,
++            turn_id="turn-1",
++            content="answer",
++            message_data=_stored(
++                ModelResponse(parts=[TextPart(content="answer")], model_name="test")
++            ),
++        ),
+     ]
+-    result = MagicMock(output="hi")
+-    result.new_messages.return_value = native
+-    agent = MagicMock()
+-    agent.run = AsyncMock(return_value=result)
+ 
+     with (
+-        patch("services.agent_service.ConversationRepository") as conv_cls,
+-        patch("services.agent_service.ConversationMessageRepository") as msg_cls,
+-        patch("services.agent_service.HistoryManager") as history_cls,
+-        patch("services.agent_service.get_agent", return_value=agent),
++        patch("services.chat_service.ChatSessionRepository") as session_cls,
++        patch("services.chat_service.ChatMessageRepository") as message_cls,
+     ):
+-        conv_cls.return_value.get_or_create = AsyncMock(
+-            return_value=(conversation, False)
+-        )
+-        conv_cls.return_value.get_by_id = AsyncMock(return_value=conversation)
+-        conv_cls.return_value.touch = AsyncMock()
+-        msg_cls.return_value.create_pending = AsyncMock(return_value=pending)
+-        msg_cls.return_value.claim = AsyncMock(return_value=pending)
+-        msg_cls.return_value.complete_turn = AsyncMock(return_value=MagicMock(id=11))
+-        msg_cls.return_value.mark_failed = AsyncMock()
+-        history_cls.return_value.build = AsyncMock(return_value=[])
++        session_cls.return_value.get_by_session_id = AsyncMock(return_value=session)
++        message_cls.return_value.list_completed_turns = AsyncMock(return_value=rows)
+ 
+-        response = await AgentService(mock_db).run(
+-            ChatRequest(message="hello", session_id="sess-1"), user_id=1
++        history = await build_model_history(
++            AsyncMock(), session_id="session-1", user_id=42, before_message_id=3
+         )
+ 
+-        assert response["answer"] == "hi"
+-        msg_cls.return_value.create_pending.assert_awaited_once()
+-        msg_cls.return_value.claim.assert_awaited_once_with(10)
+-        msg_cls.return_value.complete_turn.assert_awaited_once()
+-        call = msg_cls.return_value.complete_turn.await_args.kwargs
+-        assert call["pending_id"] == 10
+-        assert len(call["native_messages"]) == 2
+-        assert call["native_messages"][0][0] == "user"
+-        assert call["native_messages"][1][0] == "assistant"
+-
+-
+-async def test_run_marks_pending_message_failed():
+-    from services.agent_service import AgentService
+-
+-    mock_db = AsyncMock()
+-    conversation = MagicMock(
+-        id=1, session_id="sess-1", summary=None, summary_until_message_id=None
++    session_cls.return_value.get_by_session_id.assert_awaited_once_with(
++        session_id="session-1", user_id=42
+     )
+-    pending = MagicMock(id=10, conversation_id=1, user_id=1, content="hello")
+-    agent = MagicMock()
+-    agent.run = AsyncMock(side_effect=RuntimeError("model exploded"))
++    assert history[0].parts[0].content == "question"
++    assert history[1].parts[0].content == "answer"
+ 
+-    with (
+-        patch("services.agent_service.ConversationRepository") as conv_cls,
+-        patch("services.agent_service.ConversationMessageRepository") as msg_cls,
+-        patch("services.agent_service.HistoryManager") as history_cls,
+-        patch("services.agent_service.get_agent", return_value=agent),
+-    ):
+-        conv_cls.return_value.get_or_create = AsyncMock(
+-            return_value=(conversation, False)
+-        )
+-        msg_cls.return_value.create_pending = AsyncMock(return_value=pending)
+-        msg_cls.return_value.claim = AsyncMock(return_value=pending)
+-        msg_cls.return_value.mark_failed = AsyncMock()
+-        history_cls.return_value.build = AsyncMock(return_value=[])
+ 
+-        with pytest.raises(RuntimeError, match="model exploded"):
+-            await AgentService(mock_db).run(
+-                ChatRequest(message="hello", session_id="sess-1"), user_id=1
+-            )
+-        msg_cls.return_value.mark_failed.assert_awaited_once_with(10, "model exploded")
++async def test_debug_token_is_not_available_in_test_environment(client):
++    response = await client.get("/debug/token")
++    assert response.status_code == 404
+diff --git a/tests/test_history_manager.py b/tests/test_history_manager.py
+index 782956a..a2f1c6b 100644
+--- a/tests/test_history_manager.py
++++ b/tests/test_history_manager.py
+@@ -1,5 +1,4 @@
+-from types import SimpleNamespace
+-from unittest.mock import AsyncMock
++"""Persistence tests for the rebuilt chat history state machine."""
+ 
+ from pydantic_ai.messages import (
+     ModelMessagesTypeAdapter,
+@@ -9,101 +8,55 @@ from pydantic_ai.messages import (
+     UserPromptPart,
+ )
+ 
+-from services.history_manager import HistoryManager, serialize_native_messages
+-
+-
+-def row(id: int, turn_id: str, message):
+-    return SimpleNamespace(
+-        id=id,
+-        turn_id=turn_id,
+-        content="",
+-        message_data=ModelMessagesTypeAdapter.dump_python([message], mode="json")[0],
+-    )
+-
+-
+-def test_native_round_trip_and_turn_grouping():
+-    messages = [
+-        ModelRequest(parts=[UserPromptPart(content="question")]),
+-        ModelResponse(parts=[TextPart(content="answer")], model_name="test"),
+-    ]
+-    stored = serialize_native_messages(messages)
+-    restored = ModelMessagesTypeAdapter.validate_python([item[2] for item in stored])
+-    assert restored[0].parts[0].content == "question"
+-    assert restored[1].parts[0].content == "answer"
+-
+-    rows = [
+-        row(1, "a", messages[0]),
+-        row(2, "a", messages[1]),
+-        row(3, "b", messages[0]),
+-    ]
+-    groups = HistoryManager._group_turns(rows)
+-    assert [len(group) for group in groups] == [2, 1]
+-
+-
+-async def test_build_keeps_complete_native_history_below_threshold(monkeypatch):
+-    messages = [
+-        ModelRequest(parts=[UserPromptPart(content="question")]),
+-        ModelResponse(parts=[TextPart(content="answer")], model_name="test"),
+-    ]
+-    rows = [row(1, "a", messages[0]), row(2, "a", messages[1])]
+-    message_repo = SimpleNamespace(list_native_history=AsyncMock(return_value=rows))
+-    conversation_repo = SimpleNamespace()
+-    conversation = SimpleNamespace(id=1, summary=None, summary_until_message_id=None)
+-    monkeypatch.setattr(
+-        "services.history_manager.settings.HISTORY_SUMMARY_TRIGGER_TURNS", 12
+-    )
+-    monkeypatch.setattr(
+-        "services.history_manager.settings.HISTORY_SUMMARY_TRIGGER_TOKENS", 10000
+-    )
+-
+-    history = await HistoryManager(message_repo, conversation_repo).build(
+-        conversation=conversation,
+-        before_message_id=10,
+-    )
+-    assert len(history) == 2
+-    assert history[0].parts[0].content == "question"
+-
+ 
+ async def test_repository_state_machine_and_native_history():
+     from db.session import AsyncSessionLocal
+-    from repositories import ConversationMessageRepository, ConversationRepository
++    from repositories.chat_message import ChatMessageRepository
++    from repositories.chat_session import ChatSessionRepository
+ 
+     async with AsyncSessionLocal() as db:
+-        conversation, _ = await ConversationRepository(db).get_or_create(
++        session = await ChatSessionRepository(db).create(
+             session_id="native-history-integration",
+             user_id=1,
+         )
+-        repo = ConversationMessageRepository(db)
+-        pending = await repo.create_pending(
+-            conversation_id=conversation.id,
+-            user_id=1,
++        repo = ChatMessageRepository(db)
++        pending = await repo.insert(
++            session_id=session.session_id,
++            turn_id="turn-1",
++            message_index=0,
++            status="pending",
++            role="user",
+             content="question",
+         )
+-        running = await repo.claim(pending.id)
++        running = await repo.get_by_id_for_update(pending.id)
++        assert running is not None
++        await repo.update_status(running, "running")
+         assert running.status == "running"
+ 
+-        native = serialize_native_messages(
+-            [
+-                ModelRequest(parts=[UserPromptPart(content="question")]),
+-                ModelResponse(parts=[TextPart(content="answer")], model_name="test"),
+-            ]
++        native = [
++            ModelRequest(parts=[UserPromptPart(content="question")]),
++            ModelResponse(parts=[TextPart(content="answer")], model_name="test"),
++        ]
++        serialized = ModelMessagesTypeAdapter.dump_python(native, mode="json")
++        await repo.update_message_data(running, message_data=serialized[0])
++        await repo.update_status(running, "completed")
++        await repo.insert(
++            session_id=session.session_id,
++            turn_id="turn-1",
++            message_index=1,
++            status="completed",
++            role="assistant",
++            content="answer",
++            message_data=serialized[1],
+         )
+-        await repo.complete_turn(pending_id=pending.id, native_messages=native)
+-        history = await repo.list_native_history(
+-            conversation_id=conversation.id,
+-            after_id=None,
+-            before_id=10**9,
++
++        history = await repo.list_completed_turns(
++            session_id=session.session_id,
++            before_message_id=10**9,
+         )
+         assert len(history) == 2
+-        assert all(message.status == "completed" for message in history)
+-
+-        failed = await repo.create_pending(
+-            conversation_id=conversation.id,
+-            user_id=1,
+-            content="retry me",
++        restored = ModelMessagesTypeAdapter.validate_python(
++            [message.message_data for message in history]
+         )
+-        await repo.claim(failed.id)
+-        await repo.mark_failed(failed.id, "temporary error")
+-        retried = await repo.claim(failed.id, retry=True)
+-        assert retried.status == "running"
+-        assert retried.retry_count == 1
++        assert restored[0].parts[0].content == "question"
++        assert restored[1].parts[0].content == "answer"
