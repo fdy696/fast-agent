@@ -16,14 +16,10 @@ down_revision: str | None = "dd788e00562f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-JSON_DICT = sa.JSON().with_variant(postgresql.JSONB(), "postgresql")
-MESSAGE_ID = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
+JSON_DICT = postgresql.JSONB()
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    cascade = " CASCADE" if bind.dialect.name == "postgresql" else ""
-
     # This revision intentionally replaces the legacy history schema.
     for tbl in (
         "artifacts",
@@ -33,7 +29,7 @@ def upgrade() -> None:
         "conversation_messages",
         "conversations",
     ):
-        op.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}{cascade}"))
+        op.execute(sa.text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
 
     # chat_sessions
     op.create_table(
@@ -76,7 +72,7 @@ def upgrade() -> None:
     # chat_messages
     op.create_table(
         "chat_messages",
-        sa.Column("id", MESSAGE_ID, autoincrement=True, nullable=False),
+        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("session_id", sa.String(128), nullable=False),
         sa.Column("turn_id", sa.String(36), nullable=False),
         sa.Column("message_index", sa.Integer(), nullable=False),
@@ -120,33 +116,19 @@ def upgrade() -> None:
         "idx_cm_session_status_id", "chat_messages", ["session_id", "status", "id"]
     )
 
-    if bind.dialect.name == "sqlite":
-        with op.batch_alter_table("chat_sessions") as batch_op:
-            batch_op.create_foreign_key(
-                "fk_chat_sessions_summary_msg",
-                "chat_messages",
-                ["summarized_through_message_id"],
-                ["id"],
-                ondelete="SET NULL",
-            )
-    else:
-        op.create_foreign_key(
-            "fk_chat_sessions_summary_msg",
-            "chat_sessions",
-            "chat_messages",
-            ["summarized_through_message_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+    op.create_foreign_key(
+        "fk_chat_sessions_summary_msg",
+        "chat_sessions",
+        "chat_messages",
+        ["summarized_through_message_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
 
 
 def downgrade() -> None:
-    if op.get_bind().dialect.name == "sqlite":
-        with op.batch_alter_table("chat_sessions") as batch_op:
-            batch_op.drop_constraint("fk_chat_sessions_summary_msg", type_="foreignkey")
-    else:
-        op.drop_constraint(
-            "fk_chat_sessions_summary_msg", "chat_sessions", type_="foreignkey"
-        )
+    op.drop_constraint(
+        "fk_chat_sessions_summary_msg", "chat_sessions", type_="foreignkey"
+    )
     op.drop_table("chat_messages")
     op.drop_table("chat_sessions")

@@ -48,10 +48,7 @@ alembic upgrade head
 uvicorn src:app --reload --port 6000
 ```
 
-> 💡 如果没有 PostgreSQL，可将 `.env` 中 `DATABASE_URL` 改为 SQLite：
-> ```env
-> DATABASE_URL=sqlite+aiosqlite:///./fast_agent.db
-> ```
+本项目仅支持 PostgreSQL；本地开发与生产使用同一数据库能力集合。
 
 默认管理员配置来自 `.env`：
 
@@ -78,15 +75,13 @@ POST /api/v1/agent/sessions
 GET  /api/v1/agent/sessions
 POST /api/v1/agent/sessions/{session_id}/archive
 POST /api/v1/agent/sessions/{session_id}/delete
-POST /api/v1/agent/messages
-POST /api/v1/agent/messages/{message_id}/stream
-POST /api/v1/agent/messages/{message_id}/retry
-GET  /api/v1/agent/messages?session_id=...
+POST /api/v1/agent/sessions/{session_id}/messages
+GET  /api/v1/agent/sessions/{session_id}/messages
 ```
 
-历史消息完整保存在数据库中；只有 `completed` 且包含原生
-PydanticAI `message_data` 的消息会进入模型上下文。长会话自动使用
-“累计摘要 + 最近完整 Turn”，不会拆开工具调用与工具返回。
+后端不预存用户输入；前端在当前页面内乐观展示。一次 Agent Run 完成或
+中断后，后端将完整的 PydanticAI `new_messages()` 作为一条 JSONB 记录保存。
+只有语义完整的 Run 会进入下一轮上下文和滚动摘要。
 
 认证方式：
 
@@ -97,7 +92,7 @@ Authorization: Bearer <access_token>
 ## 测试
 
 ```bash
-PYTHONPATH=src pytest
+uv run --extra dev pytest
 ```
 
 ## 基础设施容器（Docker）
@@ -168,12 +163,7 @@ docker compose up -d
 
 ### 任务队列
 
-项目用 SAQ + Redis 替代了 `asyncio.create_task`，保证进程崩溃后异步任务不丢失。4 个后台任务：
-
-- `save_token_usage` — Token 费用审计入库
-- `generate_title` — 会话标题生成
-- `save_reasoning` — 推理步骤保存
-- `send_feishu_alert` — 飞书告警``
+SAQ Worker 当前用于发送飞书告警；滚动摘要在流式响应结束后以最佳努力方式执行。
 
 > ⚠️ 如果拉取镜像超时，可能是系统代理未配置到 Docker 守护进程，运行以下命令：
 > ```bash
@@ -189,13 +179,13 @@ docker compose up -d
 
 ## 数据库
 
-开发环境可以使用 SQLite：
+开发和生产环境统一使用 PostgreSQL：
 
 ```env
-DATABASE_URL=sqlite+aiosqlite:///./fast_agent.db
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/fast_agent
 ```
 
-生产环境建议使用 PostgreSQL：
+示例：
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/fast_agent

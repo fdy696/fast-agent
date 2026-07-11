@@ -1,62 +1,26 @@
-"""Persistence tests for the rebuilt chat history state machine."""
+from unittest.mock import AsyncMock
 
-from pydantic_ai.messages import (
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    UserPromptPart,
-)
+from services.summary_service import build_summary_messages
+from utils.summary_lock import SummaryLock
 
 
-async def test_repository_state_machine_and_native_history():
-    from db.session import AsyncSessionLocal
-    from repositories.chat_message import ChatMessageRepository
-    from repositories.chat_session import ChatSessionRepository
+async def test_summary_lock_releases_only_with_owner_token():
+    redis = AsyncMock()
+    redis.set.return_value = True
+    redis.eval.return_value = 1
+    lock = SummaryLock(redis, ttl_seconds=600)
 
-    async with AsyncSessionLocal() as db:
-        session = await ChatSessionRepository(db).create(
-            session_id="native-history-integration",
-            user_id=1,
-        )
-        repo = ChatMessageRepository(db)
-        pending = await repo.insert(
-            session_id=session.session_id,
-            turn_id="turn-1",
-            message_index=0,
-            status="pending",
-            role="user",
-            content="question",
-        )
-        running = await repo.get_by_id_for_update(pending.id)
-        assert running is not None
-        await repo.update_status(running, "running")
-        assert running.status == "running"
+    token = await lock.try_acquire("session-1")
+    assert token
+    await lock.release("session-1", token)
 
-        native = [
-            ModelRequest(parts=[UserPromptPart(content="question")]),
-            ModelResponse(parts=[TextPart(content="answer")], model_name="test"),
-        ]
-        serialized = ModelMessagesTypeAdapter.dump_python(native, mode="json")
-        await repo.update_message_data(running, message_data=serialized[0])
-        await repo.update_status(running, "completed")
-        await repo.insert(
-            session_id=session.session_id,
-            turn_id="turn-1",
-            message_index=1,
-            status="completed",
-            role="assistant",
-            content="answer",
-            message_data=serialized[1],
-        )
+    redis.set.assert_awaited_once_with(
+        "chat:summary:session-1", token, nx=True, ex=600
+    )
+    redis.eval.assert_awaited_once()
+    assert redis.eval.await_args.args[-1] == token
 
-        history = await repo.list_completed_turns(
-            session_id=session.session_id,
-            before_message_id=10**9,
-        )
-        assert len(history) == 2
-        restored = ModelMessagesTypeAdapter.validate_python(
-            [message.message_data for message in history]
-        )
-        assert restored[0].parts[0].content == "question"
-        assert restored[1].parts[0].content == "answer"
+
+def test_summary_is_stored_as_valid_model_history():
+    messages = build_summary_messages("用户喜欢自然风景。")
+    assert messages[0].parts[0].content.endswith("用户喜欢自然风景。")

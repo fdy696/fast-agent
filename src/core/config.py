@@ -49,10 +49,10 @@ class Settings(BaseSettings):
     AGENT_CACHE_TTL: int=7200
     MCP_TOOL_TIMEOUT: int=15
     FEISHU_WEBHOOK_URL: str=""
-    SUMMARY_TRIGGER_TURNS: int=12
-    SUMMARY_TRIGGER_ESTIMATED_TOKENS: int=10_000
-    KEEP_RECENT_TURNS: int=6
+    SUMMARY_TRIGGER_RUNS: int=10
+    KEEP_RECENT_RUNS: int=4
     MAX_SUMMARY_CHARS: int=1_500
+    SUMMARY_LOCK_TTL_SECONDS: int=600
     MCP_WEB_SEARCH_URL: str="https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp"
     MCP_AMAP_MAPS_URL: str="https://dashscope.aliyuncs.com/api/v1/mcps/amap-maps/mcp"
     AMAP_API_KEY: str=""

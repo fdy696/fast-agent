@@ -17,8 +17,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    if op.get_bind().dialect.name != "postgresql":
-        return
     op.execute(r"""
         ALTER TABLE users
         ALTER COLUMN preference TYPE jsonb
@@ -31,8 +29,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    if op.get_bind().dialect.name != "postgresql":
-        return
     op.execute("""
         ALTER TABLE users
         ALTER COLUMN preference TYPE varchar(500)

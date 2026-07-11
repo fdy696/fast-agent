@@ -1,65 +1,116 @@
-"""Agent HTTP routes — session CRUD + message lifecycle."""
+"""Chat sessions and PydanticAI-native AG-UI streaming."""
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from ag_ui.core import RunAgentInput
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic_ai.ui import SSE_CONTENT_TYPE
+from pydantic_ai.ui.ag_ui import AGUIEventStream
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from core.dependency import CurrentUser
 from db.session import get_db
-from repositories.chat_session import ChatSessionRepository
+from schemas.chat import ChatRequest
 from services.chat_service import ChatService
+from services.summary_service import SummaryService
 
 router = APIRouter()
 
-@router.post("/sessions", summary="Create session")
-async def create_session(current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    repo = ChatSessionRepository(db)
-    sid = str(uuid.uuid4())
-    session = await repo.create(session_id=sid, user_id=current_user.id)
-    return {"id": session.id, "session_id": session.session_id, "title": session.title, "created_at": session.created_at.isoformat() if session.created_at else None}
 
-@router.get("/sessions", summary="List sessions")
-async def list_sessions(current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    repo = ChatSessionRepository(db)
-    _, sessions = await repo.list_by_user(user_id=current_user.id)
-    return [{"id": s.id, "session_id": s.session_id, "title": s.title, "status": s.status, "updated_at": s.updated_at.isoformat() if s.updated_at else None} for s in sessions]
+@router.post("/sessions", summary="Create chat session")
+async def create_session(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+):
+    return await ChatService(db).create_session(current_user.id)
 
-@router.post("/sessions/{session_id}/archive", summary="Archive session")
-async def archive_session(session_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    repo = ChatSessionRepository(db)
-    session = await repo.get_by_session_id(session_id=session_id, user_id=current_user.id)
-    if not session: raise HTTPException(404, "Session not found")
-    await repo.archive(session)
+
+@router.get("/sessions", summary="List chat sessions")
+async def list_sessions(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+):
+    return await ChatService(db).list_sessions(current_user.id)
+
+
+@router.post("/sessions/{session_id}/archive", summary="Archive chat session")
+async def archive_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await ChatService(db).set_session_status(
+        session_id=session_id, user_id=current_user.id, status="archived"
+    )
+    if not updated:
+        raise HTTPException(404, "Session not found")
     return {"status": "ok"}
 
-@router.post("/sessions/{session_id}/delete", summary="Soft delete session")
-async def delete_session(session_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    repo = ChatSessionRepository(db)
-    session = await repo.get_by_session_id(session_id=session_id, user_id=current_user.id)
-    if not session: raise HTTPException(404, "Session not found")
-    await repo.soft_delete(session)
+
+@router.post("/sessions/{session_id}/delete", summary="Delete chat session")
+async def delete_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await ChatService(db).set_session_status(
+        session_id=session_id, user_id=current_user.id, status="deleted"
+    )
+    if not updated:
+        raise HTTPException(404, "Session not found")
     return {"status": "ok"}
 
-@router.post("/messages", summary="Create pending message")
-async def create_message(body: dict, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    session_id = body.get("session_id")
-    content = body.get("content", "")
-    if not session_id or not content.strip(): raise HTTPException(400, "session_id and content are required")
-    service = ChatService(db)
-    return await service.create_pending_turn(session_id=session_id, user_id=current_user.id, content=content.strip())
 
-@router.post("/messages/{message_id}/stream", summary="Stream execute message")
-async def stream_message(message_id: int, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    service = ChatService(db)
-    return await service.execute_turn(message_id, current_user.id)
+@router.get("/sessions/{session_id}/messages", summary="Get persisted messages")
+async def get_messages(
+    session_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await ChatService(db).list_messages(
+            session_id=session_id, user_id=current_user.id
+        )
+    except LookupError as exc:
+        raise HTTPException(404, "Session not found") from exc
 
-@router.post("/messages/{message_id}/retry", summary="Retry failed message")
-async def retry_message(message_id: int, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
-    service = ChatService(db)
-    return await service.retry_turn(message_id, current_user.id)
 
-@router.get("/messages", summary="Get session messages")
-async def get_messages(current_user: CurrentUser, session_id: str = Query(...), after_id: int | None = Query(None), db: AsyncSession = Depends(get_db)):
+@router.post("/sessions/{session_id}/messages", summary="Stream agent run")
+async def send_message(
+    request: Request,
+    session_id: str,
+    body: ChatRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
     service = ChatService(db)
-    return await service.list_messages(session_id=session_id, user_id=current_user.id, after_id=after_id)
+    session = await service.repository.get_session(
+        session_id=session_id, user_id=current_user.id
+    )
+    if session is None:
+        raise HTTPException(404, "Session not found")
+
+    native_events = service.stream_native_events(
+        request=request,
+        session_id=session_id,
+        user_id=current_user.id,
+        prompt=body.content,
+    )
+    accept = request.headers.get("accept", SSE_CONTENT_TYPE)
+    run_input = RunAgentInput(
+        thread_id=session_id,
+        run_id=str(uuid.uuid4()),
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props={},
+        state={},
+    )
+    event_stream = AGUIEventStream(run_input=run_input, accept=accept)
+    protocol_events = event_stream.transform_stream(native_events)
+    return StreamingResponse(
+        event_stream.encode_stream(protocol_events),
+        media_type=event_stream.content_type,
+        headers=event_stream.response_headers,
+        background=BackgroundTask(SummaryService().try_summarize, session_id),
+    )

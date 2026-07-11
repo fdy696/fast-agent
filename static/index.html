@@ -85,7 +85,7 @@
 </div>
 
 <script>
-const BASE = 'http://127.0.0.1:8000';
+const BASE = '';
 let abortController = null;
 let streamingEl = null;
 let currentMessageId = '';   // SSE 协议中的 messageId
@@ -102,14 +102,14 @@ async function getToken() {
 async function createSession() {
   const token = document.getElementById('token').value;
   if (!token) return alert('请先获取 Token');
-  const r = await fetch(`${BASE}/api/v1/agent/create_conversation`, {
+  const r = await fetch(`${BASE}/api/v1/agent/sessions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` }
   });
   const d = await r.json();
-  if (d.code === 200) {
-    document.getElementById('sessionId').value = d.data.session_id;
-    addMsg('system', `已创建会话: ${d.data.session_id}`);
+  if (r.ok) {
+    document.getElementById('sessionId').value = d.session_id;
+    addMsg('system', `已创建会话: ${d.session_id}`);
     refreshSessions();
   } else {
     addMsg('error', `创建会话失败: ${d.msg || JSON.stringify(d)}`);
@@ -119,14 +119,14 @@ async function createSession() {
 async function refreshSessions() {
   const token = document.getElementById('token').value;
   if (!token) return;
-  const r = await fetch(`${BASE}/api/v1/agent/all_conversation_list`, {
+  const r = await fetch(`${BASE}/api/v1/agent/sessions`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   const d = await r.json();
   const list = document.getElementById('sessionList');
   list.innerHTML = '';
-  if (d.code === 200 && d.data) {
-    d.data.forEach(s => {
+  if (r.ok && Array.isArray(d)) {
+    d.forEach(s => {
       const div = document.createElement('div');
       div.className = 'sess-item';
       div.textContent = s.title || ('会话 ' + s.session_id?.slice(0, 8));
@@ -144,14 +144,14 @@ async function refreshSessions() {
 
 async function loadConversation(sid) {
   const token = document.getElementById('token').value;
-  const r = await fetch(`${BASE}/api/v1/agent/get_conversation?session_id=${encodeURIComponent(sid)}`, {
+  const r = await fetch(`${BASE}/api/v1/agent/sessions/${encodeURIComponent(sid)}/messages`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   const d = await r.json();
   const area = document.getElementById('chatArea');
   area.innerHTML = '';
-  if (d.code === 200 && d.data && Array.isArray(d.data)) {
-    d.data.forEach(m => {
+  if (r.ok && Array.isArray(d)) {
+    d.forEach(m => {
       if (m.role === 'user') addMsg('user', m.content);
       else if (m.role === 'assistant') addMsg('assistant', m.content);
       else if (m.role === 'tool') addMsg('tool_result', m.content);
@@ -234,16 +234,13 @@ async function sendMsg() {
   updateStreamStatus('streaming');
 
   try {
-    const resp = await fetch(`${BASE}/api/v1/agent/chat/stream`, {
+    const resp = await fetch(`${BASE}/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: [{ type: 'text', text: content }] }],
-        thread_id: sessionId,
-      }),
+      body: JSON.stringify({ content }),
       signal: abortController.signal,
     });
 

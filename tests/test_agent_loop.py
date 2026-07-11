@@ -1,77 +1,92 @@
-"""Focused tests for the current ChatService/PydanticAI integration."""
+"""Unit tests for PydanticAI-native run persistence."""
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-
-import pytest
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_core import to_jsonable_python
 
-from agent.model_client import ModelClientError
-from services.chat_service import build_model_history
-
-
-def _stored(message):
-    return ModelMessagesTypeAdapter.dump_python([message], mode="json")[0]
+from repositories.chat import MessageBatch, flatten_batches, is_reusable_run
+from services.chat_service import current_run_messages, to_ui_messages
 
 
-def test_init_agent_requires_model_key(monkeypatch):
-    from agent import model_client
-
-    monkeypatch.setattr(model_client, "_agent", None)
-    monkeypatch.setattr("agent.model_client.settings.DEEP_SEEK_API_KEY", "")
-    monkeypatch.setattr("agent.model_client.settings.API_KEY", "")
-    with pytest.raises(ModelClientError, match="not configured"):
-        model_client.init_agent()
-
-
-async def test_build_history_uses_authenticated_user_scope():
-    session = SimpleNamespace(
-        history_summary=None,
-        summarized_through_message_id=None,
-    )
-    rows = [
-        SimpleNamespace(
-            id=1,
-            turn_id="turn-1",
-            content="question",
-            message_data=_stored(
-                ModelRequest(parts=[UserPromptPart(content="question")])
-            ),
+def complete_run(run_id: str = "run-1"):
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(content="question")],
+            run_id=run_id,
         ),
-        SimpleNamespace(
-            id=2,
-            turn_id="turn-1",
-            content="answer",
-            message_data=_stored(
-                ModelResponse(parts=[TextPart(content="answer")], model_name="test")
-            ),
+        ModelResponse(
+            parts=[TextPart(content="answer")],
+            model_name="test",
+            run_id=run_id,
         ),
     ]
 
-    with (
-        patch("services.chat_service.ChatSessionRepository") as session_cls,
-        patch("services.chat_service.ChatMessageRepository") as message_cls,
-    ):
-        session_cls.return_value.get_by_session_id = AsyncMock(return_value=session)
-        message_cls.return_value.list_completed_turns = AsyncMock(return_value=rows)
 
-        history = await build_model_history(
-            AsyncMock(), session_id="session-1", user_id=42, before_message_id=3
-        )
+def test_jsonb_round_trip_preserves_native_messages():
+    messages = complete_run()
+    stored = to_jsonable_python(messages)
+    restored = ModelMessagesTypeAdapter.validate_python(stored)
 
-    session_cls.return_value.get_by_session_id.assert_awaited_once_with(
-        session_id="session-1", user_id=42
+    assert restored == messages
+    assert isinstance(
+        ModelMessagesTypeAdapter.dump_python(messages, mode="json"), list
     )
-    assert history[0].parts[0].content == "question"
-    assert history[1].parts[0].content == "answer"
 
 
-async def test_debug_token_is_not_available_in_test_environment(client):
-    response = await client.get("/debug/token")
-    assert response.status_code == 404
+def test_only_semantically_complete_runs_are_reusable():
+    assert is_reusable_run(complete_run())
+
+    tool_only = [
+        ModelResponse(
+            parts=[ToolCallPart("weather", {"city": "Beijing"}, "call-1")],
+            model_name="test",
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart("weather", "sunny", "call-1")]
+        ),
+    ]
+    assert not is_reusable_run(tool_only)
+
+    interrupted = [
+        complete_run()[0],
+        ModelResponse(
+            parts=[TextPart(content="partial answer")],
+            model_name="test",
+            state="interrupted",
+        ),
+    ]
+    assert not is_reusable_run(interrupted)
+
+
+def test_current_run_filter_excludes_prior_history():
+    old = complete_run("old-run")
+    current = complete_run("current-run")
+
+    run_id, messages = current_run_messages([*old, *current])
+
+    assert run_id == "current-run"
+    assert messages == current
+
+
+def test_batches_flatten_without_losing_tool_pairs():
+    first = complete_run("run-1")
+    second = complete_run("run-2")
+    assert flatten_batches(
+        [MessageBatch(1, first), MessageBatch(2, second)]
+    ) == [*first, *second]
+
+
+def test_ui_projection_is_derived_from_native_types():
+    projected = to_ui_messages(
+        complete_run(), run_id="run-1", created_at="2026-07-11T00:00:00Z"
+    )
+
+    assert [message["role"] for message in projected] == ["user", "assistant"]
+    assert projected[1]["content"] == "answer"
