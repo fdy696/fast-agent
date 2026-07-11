@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from core.config import settings
 from db.base import Base
-from models import AuditLog, Conversation, FileMapping, TravelPlan, User  # noqa: F401
+from models import AuditLog, ChatMessage, ChatSession, FileMapping, User  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

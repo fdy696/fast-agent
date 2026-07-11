@@ -1,8 +1,8 @@
 [project]
-name = "fast-agent"
+name = "fastapi-backend-template"
 version = "1.0.0"
 description = "轻量 AI 应用后端模板"
-authors = [{name = "fast-agent", email = "dev@example.com"}]
+authors = [{name = "fastapi-backend-template", email = "dev@example.com"}]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -21,7 +21,6 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.13.0",
     "asyncpg>=0.28.0",
-    "aiosqlite>=0.19.0",
     "PyJWT>=2.8.0",
     "pydantic-settings>=2.0.0",
     "pydantic[email]>=2.0.0",
@@ -32,9 +31,11 @@ dependencies = [
     "slowapi>=0.1.9",
     "redis>=4.5.0",
     "openai>=2.29.0",
+    "pydantic-ai-slim[ag-ui,openai]>=1.0.0",
     "fastmcp>=3.3.1",
     "pyyaml>=6.0",
     "tiktoken>=0.7.0",
+    "saq>=0.18.0",
 ]
 
 [project.optional-dependencies]

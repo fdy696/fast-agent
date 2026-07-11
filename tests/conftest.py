@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -14,7 +15,10 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("DEBUG", "false")
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/fast_agent_test",
+)
 os.environ.setdefault("FIRST_SUPERUSER_USERNAME", "admin")
 os.environ.setdefault("FIRST_SUPERUSER_PASSWORD", "AdminPass123")
 os.environ.setdefault("FIRST_SUPERUSER_EMAIL", "admin@example.com")
@@ -22,20 +26,24 @@ os.environ.setdefault("SWAGGER_UI_USERNAME", "admin")
 os.environ.setdefault("SWAGGER_UI_PASSWORD", "admin12345")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-fast-agent-at-least-32-bytes")
 
-from db.base import Base  # noqa: E402
-from db.session import async_engine  # noqa: E402
+from src import app  # noqa: E402
+
 from core.init_app import init_superuser  # noqa: E402
 from core.rate_limit import limiter  # noqa: E402
-from src import app  # noqa: E402
+from db.base import Base  # noqa: E402
+from db.session import async_engine  # noqa: E402
 
 limiter.enabled = False
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session")
 async def prepare_database():
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+    except OSError as exc:
+        pytest.skip(f"PostgreSQL test database unavailable: {exc}")
     await init_superuser()
     yield
     async with async_engine.begin() as conn:
@@ -43,7 +51,7 @@ async def prepare_database():
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(prepare_database):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

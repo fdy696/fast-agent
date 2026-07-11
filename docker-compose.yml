@@ -1,0 +1,179 @@
+name: fast-agent
+
+services:
+  # ============================================================================
+  # 1. 关系型数据库：Postgres + pgvector
+  # ============================================================================
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg16
+    container_name: fast-agent-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mysecretpassword}
+      POSTGRES_DB: fast_agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - fast_agent_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # 2. 缓存：Redis
+  # ============================================================================
+  redis:
+    image: redis:7.4-alpine
+    container_name: fast-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - fast_agent_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # 3. 前端：Vue 3 + Vant
+  # ============================================================================
+  frontend:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    container_name: fast-agent-frontend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  # ============================================================================
+  # 4. Web 服务：FastAPI
+  # ============================================================================
+  web:
+    build: .
+    container_name: fast-agent-web
+    ports:
+      - "6000:6000"
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:mysecretpassword@postgres:5432/fast_agent_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DEEP_SEEK_API_KEY=${DEEP_SEEK_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - APPCODE=${APPCODE:-}
+      - AMAP_API_KEY=${AMAP_API_KEY:-}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # 5. 任务队列 Worker
+  # ============================================================================
+  worker:
+    build: .
+    container_name: fast-agent-worker
+    command: python run_worker.py
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:mysecretpassword@postgres:5432/fast_agent_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DEEP_SEEK_API_KEY=${DEEP_SEEK_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - APPCODE=${APPCODE:-}
+      - AMAP_API_KEY=${AMAP_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # 6. Milvus 依赖：etcd
+  # ============================================================================
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: milvus-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - milvus_etcd_data:/etcd
+    command: >
+      etcd
+      -advertise-client-urls=http://127.0.0.1:2379
+      -listen-client-urls=http://0.0.0.0:2379
+      --data-dir /etcd
+    restart: unless-stopped
+
+  # ============================================================================
+  # 7. Milvus 依赖：MinIO 对象存储
+  # ============================================================================
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    container_name: milvus-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - milvus_minio_data:/data
+    command: minio server /data --console-address ":9001"
+    restart: unless-stopped
+
+  # ============================================================================
+  # 8. 向量数据库：Milvus Standalone
+  # ============================================================================
+  milvus-standalone:
+    image: milvusdb/milvus:v2.5.16
+    container_name: milvus-standalone
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    command: ["milvus", "run", "standalone"]
+    depends_on:
+      - milvus-etcd
+      - milvus-minio
+    restart: unless-stopped
+
+  # ============================================================================
+  # 9. Milvus 图形面板：Attu
+  # ============================================================================
+  milvus-attu:
+    image: zilliz/attu:v2.4.11
+    container_name: milvus-attu
+    ports:
+      - "8000:3000"
+    environment:
+      MILVUS_URL: milvus-standalone:19530
+    depends_on:
+      - milvus-standalone
+    restart: unless-stopped
+
+volumes:
+  fast_agent_postgres_data:
+  fast_agent_redis_data:
+  milvus_data:
+  milvus_etcd_data:
+  milvus_minio_data:

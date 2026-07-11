@@ -15,6 +15,9 @@ COPY migrations ./migrations
 
 RUN pip install --no-cache-dir .
 
-EXPOSE 8000
+EXPOSE 6000
 
-CMD ["uvicorn", "src:app", "--host", "0.0.0.0", "--port", "8000"]
+# 默认启动 Web 服务；Worker 模式用 CMD override
+COPY run_worker.py .
+
+CMD ["uvicorn", "src:app", "--host", "0.0.0.0", "--port", "6000"]

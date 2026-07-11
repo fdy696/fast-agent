@@ -1,6 +1,7 @@
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, NoResultFound, SQLAlchemyError
 from starlette.responses import Response
 
@@ -63,8 +64,15 @@ async def GeneralExceptionHandle(_: Request, exc: Exception) -> JSONResponse:
 
 
 async def RequestValidationHandle(_: Request, exc: RequestValidationError) -> JSONResponse:
-    msg = f"RequestValidationError: {exc}" if settings.DEBUG else "请求参数验证失败，请检查输入格式"
+    msg = exc.errors()[0]["msg"] if exc.errors() else "请求参数验证失败"
     return JSONResponse(status_code=422, content={"code": 422, "msg": msg, "data": None})
+
+
+async def PydanticValidationHandle(_: Request, exc: ValidationError) -> JSONResponse:
+    """捕获 Pydantic model 在校验器（field_validator）中抛出的错误。"""
+    first = exc.errors()[0]
+    msg = first["msg"].removeprefix("Value error, ")
+    return JSONResponse(status_code=400, content={"code": 400, "msg": msg, "data": None})
 
 
 async def ResponseValidationHandle(_: Request, exc: ResponseValidationError) -> JSONResponse:
