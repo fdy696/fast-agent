@@ -26,6 +26,6 @@ class ChatSession(Base, TimestampMixin):
     summary_message_list: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSONB, nullable=True
     )
-    summarized_through_message_id: Mapped[int] = mapped_column(
-        BigInteger, default=0, nullable=False
+    summarized_through_message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
     )
